@@ -16,9 +16,9 @@ def parseArgs():
             help="output file path - defaults out to stdout")
     parser.add_argument('-w','--window',type=int,required=False,default=10,
             help="binning window for calculating methylation")
-    parser.add_argument('-a','--alpha',type=float,required=False,default=0.05,
+    parser.add_argument('-a','--alpha',type=float,required=False,default=-1,
             help="FDR q-value threshold")
-    parser.add_argument('-t','--thr',type=int,required=False,default=1,
+    parser.add_argument('-t','--thr',type=int,required=False,default=3,
             help="coverage threshold for NDR candidate")
     args = parser.parse_args()
     return args
@@ -30,22 +30,35 @@ def readInput(inputpath) :
         in_fh = open(inputpath,'r')
     return in_fh
 
-testResult=namedtuple('testResult',['rname','start','end','qname','nuc','NDRfreq'])
-def printResult(testresult,out):
-    print("\t".join([str(x) for x in testresult]),file=out)
-
+testResult=namedtuple('testResult',['pval','readsopen','numreads','ndr_freq','region_freq'])
+class methCounts :
+    def __init__(self):
+        self.methcount,self.testcount,self.totmeth,self.totcount=[0,0,0,0]
 class candidateInt :
 # get number of methylated and total number of calls in that region
 # get the average frequency in the entire region
 # perform one-tailed binomial test
     def __init__(self,intersect):
         self.region=intersect.region
-        self.methread=intersect.methread
+        self.metharrays=[]
+        self.openreads=0
+        self.totreads=0
         self.center=self.getCenter()
+        self.addread(intersect.methread)
     def getCenter(self):
         start=self.region.start
         end=self.region.end
         return start+int((end-start)/2)
+    def addread(self,read):
+        self.metharrays.append(read.callarray)
+        self.totreads+=1
+    def isnew(self,newregion):
+        if (self.region.rname == newregion.rname
+                and self.region.start == newregion.start
+                and self.region.end == newregion.end):
+            return False
+        else :
+            return True
     def setTestRegion(self,upstream,downstream) :
         center=self.getCenter()
         if self.region.strand == "-":
@@ -54,63 +67,101 @@ class candidateInt :
             testreg=[center-upstream,center+downstream]
         self.testRegion=testreg
     def NDRtest(self,cov) :
-        metharray=self.methread.callarray
-        metharray=metharray[metharray[:,1]!=-1]
-        pos=metharray[:,0]
-        meth=metharray[:,1]
-        testmeth=meth[(pos>=self.testRegion[0])&
-                (pos<self.testRegion[1])]
-        testcnt=len(testmeth)
-        methcnt=sum(testmeth)
-        if testcnt==0 :
-            methfreq=-1
-            nuc=-1
-        else : 
-            methfreq=float(methcnt)/testcnt
-            nuc=int(methfreq>0.5)
-        self.result=testResult(self.methread.rname,
-                self.methread.start,
-                self.methread.end,
-                self.methread.qname,
-                nuc,methfreq)
+        counts=methCounts()
+        for metharray in self.metharrays:
+            metharray=metharray[metharray[:,1]!=-1]
+            pos=metharray[:,0]
+            meth=metharray[:,1]
+            testmeth=meth[(pos>=self.testRegion[0])&
+                    (pos<self.testRegion[1])]
+            counts.testcount+=len(testmeth)
+            counts.methcount+=sum(testmeth)
+            counts.totcount+=len(meth)
+            counts.totmeth+=sum(meth)
+            if len(testmeth) == 0 :
+                self.totreads-=1
+            else : 
+                if (float(sum(testmeth))/len(testmeth)
+                        > float(sum(meth))/len(meth)):
+                    self.openreads+=1
+        if counts.testcount < cov :
+            pval=-1
+            totfreq=-1
+            ndrfreq=-1
+        else :
+            pval=ss.binom_test(x=counts.methcount,
+                    n=counts.testcount,
+                    p=float(counts.totmeth)/counts.totcount)
+            totfreq=float(counts.totmeth)/counts.totcount
+            ndrfreq=float(counts.methcount)/counts.testcount
+        self.result=testResult(pval,self.openreads,self.totreads,ndrfreq,totfreq)
 
-def makekey(strlist):
-    return ".".join(strlist)
+fdrResult=namedtuple('fdrResult',['rname','start','end','strand','feature','fdr','pval','readsopen','numreads','ndr_freq','region_freq'])
+def getFDR(regdict,alpha):
+    keys=list(sorted(regdict.keys()))
+    pvals=np.asarray([regdict[i].result.pval for i in keys])
+    sortind=np.argsort(pvals)
+    pvals_sort=np.take(pvals,sortind)
+    multiplier=len(pvals)/(np.array(range(len(pvals)))+1)
+    fdr=pvals_sort*multiplier
+    thr=np.argmax(fdr>alpha)
+    if alpha == -1 :
+        sigind=[keys[i] for i in sortind]
+    else :
+        sigind=[keys[i] for i in sortind[:thr]]
+    regions_sorted=[regdict[i] for i in sigind]
+    fdr_result=[fdrResult(regions_sorted[i].region.rname,
+        regions_sorted[i].testRegion[0],
+        regions_sorted[i].testRegion[1],
+        regions_sorted[i].region.strand,
+        regions_sorted[i].region.name,
+        fdr[i],
+        regions_sorted[i].result.pval,
+        regions_sorted[i].result.readsopen,
+	regions_sorted[i].result.numreads,
+        regions_sorted[i].result.ndr_freq,
+        regions_sorted[i].result.region_freq) for i in range(len(sigind))]
+    return fdr_result
+
+def printResult(testresult,out):
+    print("\t".join([str(x) for x in testresult]),file=out)
+
+def makekey(region):
+    return ".".join([str(x) for x in region])
 
 def readlevelNDR(gpc,out,cov=3,window=10,alpha=0.05) :
     regdict=dict()
     i=0
     for line in gpc:
-        i+=1
-        cand=candidateInt(methInt(line))
-        # NDR cnadidate is -100 to +50 bp of the TSS (stranded)
-        cand.setTestRegion(100,50)
-        cand.NDRtest(cov)
-        key=makekey([cand.region.rname]+[str(x) for x in cand.testRegion])
-        try : 
-            regdict[key].append(cand.result)
-        except KeyError :
-            regdict[key]=[cand.result]
-        # for debugging
-#        if i==10000 : 
-#            break
-    reglist=[]
-    keys=sorted(regdict.keys())
-    for key in keys :
-        calls=[x.nuc for x in regdict[key] if x.nuc != -1]
-        if len(calls)==0:
-            opencount=-1
-            closecount=-1
-            freq=-1
+        intersect_read=methInt(line)
+        key=makekey(intersect_read.region)
+        if key not in regdict.keys():
+            regdict[key]=candidateInt(intersect_read)
         else : 
-            totcount=len(calls)
-            opencount=sum(calls)
-            closecount=totcount-opencount
-            freq=float(opencount)/totcount
-        reglist.append([opencount,closecount,freq])
-    sortindex=np.argsort(np.array(reglist)[:,2])[::-1]
-    [ print("\t".join(keys[i].split(".")+
-        [str(x) for x in reglist[i]]),file=out) for i in sortindex if reglist[i][2] != -1]
+            regdict[key].addread(intersect_read.methread)
+        i+=1
+        if i % 10000 == 0 :
+            print("Read in {} reads".format(i),file=sys.stderr)
+        # for debugging
+#        if i == 10000 :
+#            break
+    print("Total {} reads read".format(i),file=sys.stderr)
+    print("Performing binomial tests")
+    i=0
+    for key in list(regdict.keys()) :
+        # NDR cnadidate is -100 to +50 bp of the TSS (stranded)
+        regdict[key].setTestRegion(100,50)
+        regdict[key].NDRtest(cov)
+        if regdict[key].result.pval == -1 :
+            regdict.pop(key)
+        i+=1
+        if i % 1000 == 0 :
+            print("Processed {} regions".format(i),file=sys.stderr)
+    print("Total {} regions processed".format(i),file=sys.stderr)
+    print("Calculating FDR",file=sys.stderr)
+    fdr_result=getFDR(regdict,alpha)
+    print("Writing out the result",file=sys.stderr)
+    [printResult(x,out) for x in fdr_result]
 
 if __name__=="__main__":
     args=parseArgs()

@@ -17,7 +17,8 @@ class MethRead :
         self.rlen=self.end-self.start
         self.qname=self.fields[3]
         self.methstring=self.fields[4]
-        self.seqstring=self.fields[5]
+        self.ratiostring=self.fields[5]
+        self.seqstring=self.fields[6]
         self.seqs=self.seqstring.strip().split(",")
         self.calldict=self.parseMeth()
         self.keys=sorted(self.calldict.keys())
@@ -65,10 +66,10 @@ class methInt :
     def __init__(self,string):
         f=string.strip().split("\t")
         self.fields=f
-        mread="\t".join(self.fields[:6])
-        reg="\t".join(self.fields[6:])
+        mread="\t".join(self.fields[:7])
+        reg=self.fields[7:]
         self.methread=MethRead(mread)
-        self.region=region(f[6],int(f[7]),int(f[8]),f[11],f[9])
+        self.region=region(reg[0],int(reg[1]),int(reg[2]),reg[5],reg[3])
 
 # parse frequency line
 class methFreq : 
