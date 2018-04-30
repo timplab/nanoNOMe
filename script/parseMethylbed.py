@@ -1,12 +1,30 @@
 #! /usr/bin/env python
 
+import os
 import math
 import bisect
 import sys
 import argparse
 import gzip
 from collections import namedtuple
-from methylation_parsers import MethRead
+from nomeseq_parsers import MethRead,methInt
+
+def parseArgs() :
+    # dir of source code
+    srcpath=sys.argv[0]
+    srcdir=os.path.dirname(os.path.abspath(srcpath))
+    # get module
+    module=sys.argv[1]
+    # parse args
+    parser = argparse.ArgumentParser( description='parse methylation bed files' )
+    parser.add_argument('-i', '--input', type=str, required=False)
+    parser.add_argument('-o', '--out', type=str, required=False,
+            help="output file path - defaults out to stdout")
+    parser.add_argument('-m','--mod',type=str,required=False,default="cpg")
+    args = parser.parse_args(sys.argv[2:])
+    args.srcdir=srcdir
+    args.module=module
+    return args
 
 class SiteStats:
     def __init__(self,methcall):
@@ -42,7 +60,7 @@ def printBedgraph(stats):
         stats.num_methylated,
         stats.num_reads-stats.num_methylated))
 
-def getFreq(args,in_fh):
+def getFreq(args,in_fh,out):
     sites=dict()
     for line in in_fh:
         read=MethRead(line)
@@ -68,50 +86,39 @@ def getFreq(args,in_fh):
     for key in sorted(sites.keys()):
         printBedgraph(sites[key])
 
-def getReadlevel(args,in_fh):
+def getReadlevel(args,in_fh,out):
     for line in in_fh:
         read=MethRead(line)
         callkeys=sorted(read.calldict)
         for key in callkeys:
             methcall=read.calldict[key]
-            print("{}\t{}\t{}\t{}\t{}".format(
-                methcall.rname,
-                methcall.pos,
-                methcall.call,
-                read.qname,
-                methcall.seq))
-class Feature :
-    def __init__(self,bedentry):
-        self.fields=bedentry.strip().split("\t")
-        self.rname=self.fields[0]
-        self.start=int(self.fields[1])
-        self.end=int(self.fields[2])
-        self.strand=self.fields[-2]
-    
-def getMethIntersect(args,in_fh):
-    for line in in_fh:
-        fields=line.strip().split("\t")
-        read=MethRead("\t".join(fields[0:6]))
-        feature=Feature("\t".join(fields[6:]))
-        for key in read.keys :
-            call=read.calldict[key]
-            if key >= feature.start and key < feature.end :
-                print("{}\t{}\t{}\t{}\t{}".format(
-                    call.rname,
-                    call.pos,
-                    call.call,
-                    read.qname,
-                    call.pos-feature.start))
+            outlist=[read.rname]+[str(x) for x in methcall]
+            outlist.insert(3,read.qname)
+            print("\t".join(outlist),file=out)
 
-        
+def getMethIntersect(args,in_fh,out) :
+    for line in in_fh :
+       intersect=methInt(line)
+       read=intersect.methread
+       region=intersect.region
+       start=region.start
+       end=region.end
+       for key in read.keys :
+           methcall=read.calldict[key]
+           if key >= start and key < end :
+               outlist=([region.rname]+
+                       [str(x) for x in methcall]+
+                       [str(x) for x in region.items]+
+                       [str(methcall.pos-region.start)])
+               outlist.insert(2,str(methcall.pos+1))
+               outlist.insert(4,read.qname)
+               print("\t".join(outlist),file=out)
+       
 def main() :
-    # parse args
-    parser = argparse.ArgumentParser( description='Calculate methylation frequency from sorted methylation bed file')
-    parser.add_argument('-i', '--input', type=str, required=False)
-    parser.add_argument('-t','--type',type=str,required=False,default="frequency",
-            help="type of output: one of frequency,readlevel")
-    parser.add_argument('-m','--mod',type=str,required=False,default="cpg")
-    args = parser.parse_args()
+    args=parseArgs()
+    if args.module != "readlevel" and args.module != "intersect":
+        sys.exit("currently only supports readlevel and intersect module, exiting.")
+    # read in input
     if args.input:
         if args.input.split('.')[-1]=="gz":
             in_fh=gzip.open(args.input,'rt')
@@ -119,12 +126,19 @@ def main() :
             in_fh = open(args.input,'r')
     else:
         in_fh = sys.stdin
-    if args.type == "frequency":
-        getFreq(args,in_fh)
-    elif args.type == "readlevel":
-        getReadlevel(args,in_fh)
-    elif args.type == "intersect":
-        getMethIntersect(args,in_fh)
+    # read in output
+    if args.out:
+        out=open(args.out,'w')
+    else :
+        out=sys.stdout
+    #
+    if args.module == "frequency":
+        getFreq(args,in_fh,out)
+    elif args.module == "readlevel":
+        getReadlevel(args,in_fh,out)
+    elif args.module == "intersect" :
+        getMethIntersect(args,in_fh,out)
+
     in_fh.close()
 
 if __name__=="__main__":

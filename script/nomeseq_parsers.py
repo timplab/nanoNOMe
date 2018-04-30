@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 # for read from a methylation bed file
-methylCall = namedtuple('methylCall', ['rname','pos','call','seq'])
+methylCall = namedtuple('methylCall', ['pos','call','ratio','seq'])
 class MethRead :
     def __init__(self,string):
         self.fields=string.strip().split("\t")
@@ -17,9 +17,8 @@ class MethRead :
         self.rlen=self.end-self.start
         self.qname=self.fields[3]
         self.methstring=self.fields[4]
-        self.ratiostring=self.fields[5]
-        self.seqstring=self.fields[6]
-        self.seqs=self.seqstring.strip().split(",")
+        self.ratios=self.fields[5].strip().split(",")
+        self.seqs=self.fields[6].strip().split(",")
         self.calldict=self.parseMeth()
         self.keys=sorted(self.calldict.keys())
         self.callarray=self.getArray(self.calldict)
@@ -35,7 +34,11 @@ class MethRead :
                 is_meth=-1
             else :
                 is_meth=int(call=="m")
-            calldict[self.make_key(pos)]=methylCall(self.rname,pos,is_meth,self.seqs[i])
+            calldict[self.make_key(pos)]=methylCall(
+                    pos,
+                    is_meth,
+                    self.ratios[i],
+                    self.seqs[i])
         return calldict
     def getArray(self,calldict) :
         callarray=np.array([(x,calldict[x].call) for x in sorted(calldict.keys())])
@@ -61,7 +64,22 @@ class MethRead :
         return
 
 # for a line in intersect result
-region = namedtuple('region', ['rname','start','end','strand','name'])
+class Region :
+    def __init__(self,l) :
+        self.items=l
+        self.rname=l[0]
+        self.start=int(l[1])
+        self.end=int(l[2])
+        self.name=l[3]
+        self.score=l[4]
+        self.strand=l[5]
+        self.id=l[6]
+        self.fxn=l[7]
+        try : 
+            self.center=int(l[8])
+        except IndexError :
+            pass
+
 class methInt :
     def __init__(self,string):
         f=string.strip().split("\t")
@@ -69,7 +87,11 @@ class methInt :
         mread="\t".join(self.fields[:7])
         reg=self.fields[7:]
         self.methread=MethRead(mread)
-        self.region=region(reg[0],int(reg[1]),int(reg[2]),reg[5],reg[3])
+        self.region=Region(reg[:8])
+        try : 
+            self.center=int(reg[8])
+        except IndexError :
+            pass
 
 # parse frequency line
 class methFreq : 
