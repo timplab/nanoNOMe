@@ -2,16 +2,24 @@
 library(tidyverse)
 library(GenomicRanges)
 library(GGally)
-source("/home/isac/Code/ilee/plot/methylation_utils.R")
+source("../../plot/methylation_plot_utils.R")
 
+# set this to TRUE to remove unnecessary objects throughout the process
 limitedmem=TRUE
-plotdir="~/Dropbox/Data/nome-seq/plots/frequency"
-datroot="/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all"
+
+# set directories
+root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
+plotdir=file.path(root,"plots/repeats")
+if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
+datroot=file.path(root,"pooled/methylation/mfreq_all")
+regdir=file.path(root,"database/hg38")
+# get file paths of data
 cells=c("GM12878","MCF10A","MCF7","MDAMB231")
 fpaths=tibble(cell=cells,
-#          cpg=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz")))#,
+          cpg=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz")),
           gpc=file.path(datroot,paste0(cell,".gpc.methfreq.txt.gz")))
 pd=gather(fpaths,key=calltype,value=filepath,-cell)
+
 # validation group (illumina)
 if (F) {
     illpd=tibble(cell="GM12878_illumina",calltype=c("cpg","gpc"),
@@ -22,35 +30,46 @@ if (F) {
 
 # regions
 if (T){
-    regname="repregions"
-    reg.fp="/mithril/Data/NGS/Reference/human_annotations/nestedRepeats.bed"
+    regnames=c("DNA","RTP","LINE","SINE")
+    reg.info=tibble(regtype=regnames)%>%
+        mutate(filepath=paste0(regdir,"/hg38_repeats_",regtype,".bed"))
     subset=FALSE
 }
 #read in regions
 cat("reading in the region\n")
 extracols="regtype"
-db=load_db(reg.fp,extracols)
-
+#db=lapply(reg.info$filepath,function(x){
+#    load_db(x,extracols)})
 covthr=2
 trinuc="GCG"
-dat.list=lapply(seq(dim(pd)[1]),function(i){
-    pd.samp=pd[i,]
-    cat(paste0("sample : ",pd.samp$cell,"\n"))
-    # read in the entire data first
-    dat=tabix_mfreq(pd.samp$filepath,cov=covthr,trinuc_exclude=trinuc)
-    # overlaps
-    cat("finding overlaps\n")
-    dat.ovl=getRegionMeth(dat,db)
-    if (limitedmem) rm(dat);gc()
-    #get labels
-    cat("attaching labels\n")
-    dat.ovl$feature.type=db$regtype[dat.ovl$feature.index]
-    dat.ovl$samp=pd.samp$cell
-    dat.ovl$calltype=pd.samp$calltype
-    dat.ovl
+
+MethByRegion <- function(pd,reg){
+    cat(paste0(reg,"\n"))
+    dat.list=lapply(seq(dim(pd)[1]),function(i){
+        pd.samp=pd[i,]
+        cat(paste0(pd.samp$cell,":",pd.samp$calltype,"\n"))
+        # read in the data
+        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg$filepath,
+                        cov=covthr,trinuc_exclude=trinuc)
+        # overlaps
+        cat("getting methylation by region\n")
+        db=load_db(reg,extracols)
+        dat.ovl=getRegionMeth(dat,db)
+        rm(dat);gc()
+        #get labels
+        cat("attaching labels\n")
+        dat.ovl$feature.type=db$regtype[dat.ovl$feature.index]
+        dat.ovl$samp=pd.samp$cell
+        dat.ovl$calltype=pd.samp$calltype
+        dat.ovl
+    })
+    dat.cat=do.call(rbind,dat.list)
 })
 
-dat.plt=do.call(rbind,dat.list)
+dat.list=lapply(reg.info$filepath,function(x){
+    MethByRegion(pd,x)})
+dat.all=do.call(rbind,dat.list)
+
 cpg.plt=dat.plt[which(dat.plt$calltype=="cpg"),]
 gpc.plt=dat.plt[which(dat.plt$calltype=="gpc"),]
 

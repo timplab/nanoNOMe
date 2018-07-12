@@ -16,7 +16,7 @@ cpg=$freqdir/$cell.cpg.methfreq.txt.gz
 gpc=$freqdir/$cell.gpc.methfreq.txt.gz
 plotdir=$root/plots/aggregate
 [ -e $plotdir ]||mkdir -p $plotdir
-dbroot=/dilithium/Data/Nanopore/projects/nomeseq/database
+dbroot=$root/database
 if [ "$1" == "ctcf" ];then
   #dbpath="/home/isac/Dropbox/Data/nome-seq/db/ctcf/gm12878/GM12878_CTCF.ENCFF536RGD.2kb.bed"
   dbpath="$dbroot/$samp/ctcf/GM12878_ctcf.2000bp.bed"

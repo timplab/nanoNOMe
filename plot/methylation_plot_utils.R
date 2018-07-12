@@ -48,7 +48,7 @@ getCenter <- function(db.gr){
 getRegionMeth <- function(query,subject,verbose=TRUE){
     if (verbose) cat("converting data to GRanges if not supplied as them\n")
     if (class(query)[1] != "GRanges") query=GRanges(query)
-    if (class(subject)[1] != "GRanges") subject=Granges(subject)
+    if (class(subject)[1] != "GRanges") subject=GRanges(subject)
     if (verbose) cat("finding overlaps\n")
     ovl=findOverlaps(query,subject)
     freq.tb=tibble(freq=query$freq[queryHits(ovl)],
