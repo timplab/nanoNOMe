@@ -1,0 +1,81 @@
+#!/bin/bash -l
+
+#SBATCH
+#SBATCH --job-name=callmeth
+#SBATCH --nodes=1
+# number of tasks (processes) per node
+#SBATCH --ntasks-per-node=1
+# number of cpus (threads) per task (process)
+#######SBATCH --cpus-per-task=24
+#######SBATCH --time=6:0:0
+
+#### perform methylation calling
+
+##argument parsing
+while :
+do
+  case "$1" in
+    -s | --src) #path for nanopolish
+      src=$2
+      shift 2
+      ;;
+    -i | --input) #path for input
+      reads=$2
+      shift 2
+      ;;
+    -g | --genome) ##reference genome
+      ref=$2
+      shift 2
+      ;;
+    -b | --bam) ##bam file path
+      bam=$2
+      shift 2
+      ;;
+    -m | --mod)
+      mod=$2
+      shift 2
+      ;;
+    -o | --out) ##full out path
+      methout=$2
+      shift 2
+      ;;
+    -w | --window) # window for claling/ optional
+      win="-w "$2""
+      shift 2
+      ;;
+    -e | --env )
+      env=$2
+      shift 2
+      ;;
+    *) break
+      ;;
+  esac
+done
+
+if [ "$env" == "aws" ];then
+  t=36
+elif [ "$env" == "marcc" ];then
+  t=24
+fi
+
+srcroot=$(dirname "$src")
+if [ "$mod" == "cpg" ];then
+  marg="-a cpg"
+elif [ "$mod" == "gpc" ];then
+  modeldir=${srcroot}/etc/r9-models
+  fofn=$modeldir/gpc.model.fofn
+  [ -e $fofn ]||`readlink -f ${modeldir}/*gpc*model > $fofn`
+  marg="-a gpc -m $fofn"
+elif [ "$mod" == "dam" ];then
+  marg="-a dam"
+fi
+#calling methylation
+com="$src call-methylation -v -t $t -r $reads -g $ref $marg -b $bam $win > $methout"
+if [ ${SLURM_ARRAY_TASK_ID} ];then
+  com=${com//"%a"/${SLURM_ARRAY_TASK_ID}}
+fi
+echo "job $SLURM_JOBID : $com"
+eval $com
+awk '{ if($5>2.5){count+=1;meth+=1};if($5<-2.5){count+=1} }END { print count/NR,meth/count }' ${methout//"%a"/${SLURM_ARRAY_TASK_ID}}
+echo "Finished job $SLURM_JOBID : call methylation on $reads"
+
