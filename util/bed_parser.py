@@ -17,9 +17,13 @@ def parseArgs():
     parent_parser.add_argument('-v', '--verbose', action='store_true',default=False,
             help="verbose output")
     # parser for center
-    parser_center = subparsers.add_parser('center',parents=[parent_parser], 
+    parser_center = subparsers.add_parser('getcenter',parents=[parent_parser], 
             help = 'get center')
     parser_center.set_defaults(func=get_center)
+    # parser for start
+    parser_start = subparsers.add_parser('getstart',parents=[parent_parser],
+            help = 'get start in strand-specific manner')
+    parser_start.set_defaults(func=get_start)
     # parser for region
     parser_region = subparsers.add_parser('region',parents=[parent_parser],
             help = 'get region')
@@ -55,12 +59,20 @@ def get_center(bed,args) :
     bed.update_fields()
     return bed
 
+def get_start(bed,args) :
+    if bed.strand == "-" :
+        bed.start=bed.end-1
+    else :
+        bed.end=bed.start+1
+    bed.update_fields()
+    return bed
+
 def get_region(bed,args) :
-    start=bed.start-args.upstream-1
-    end=bed.start+args.downstream+1
-    bed.fields=[bed.chrom,start,end,
-            bed.name,bed.score,bed.strand,
-            bed.start,bed.end]
+    bed.fields[6:]=[bed.start,bed.end]
+    start_original=bed.start 
+    bed.start=start_original-args.upstream-1
+    bed.end=start_original+args.downstream+1
+    bed.update_fields()
     return bed
 
 if __name__=="__main__":
@@ -73,5 +85,6 @@ if __name__=="__main__":
     for line in bedfh :
         bedline=BedQuery(line)
         newbed=args.func(bedline,args)
-        newbed.printbed(args.out)
+        if newbed.start >= 0 :
+            newbed.printbed(args.out)
 
