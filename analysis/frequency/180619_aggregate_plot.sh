@@ -1,25 +1,18 @@
 #!/bin/bash
 cell=GM12878
-cell=GM12878_sample
-#cell=GM12878_control
+cell=GM12878_illumina
+cell=GM12878_illumina_negcontrol
+cell=GM12878_BSseq_ENCLB794YYH
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-if [ "$cell" == "GM12878" ];then
-  freqdir=$root/pooled/methylation/mfreq
-  samp=gm12878
-elif [ "$cell" == "GM12878_sample" ]||
-  [ "$cell" == "GM12878_control" ];then #scNOMe sample
-  freqdir=$root/validation/scNOMe/methfreq
-  samp=gm12878
-fi
+freqdir=$root/pooled/methylation/mfreq_all
+plotdir=$root/plots/aggregate
+samp=gm12878
 echo $cell
 cpg=$freqdir/$cell.cpg.methfreq.txt.gz
 gpc=$freqdir/$cell.gpc.methfreq.txt.gz
-plotdir=$root/plots/aggregate
-[ -e $plotdir ]||mkdir -p $plotdir
-dbroot=$root/database
 if [ "$1" == "ctcf" ];then
   #dbpath="/home/isac/Dropbox/Data/nome-seq/db/ctcf/gm12878/GM12878_CTCF.ENCFF536RGD.2kb.bed"
-  dbpath="$dbroot/$samp/ctcf/GM12878_ctcf.2000bp.bed"
+  dbpath="/home/isac/Dropbox/Data/nome-seq/db/$samp/ctcf/GM12878_CTCF.2kb.bed"
 elif [ "$1" == "tss" ];then
   dbpath=/mithril/Data/NGS/Reference/human_annotations/hg38.91.TSS.2kb.bed
 elif [ "$1" == "cgitss" ];then

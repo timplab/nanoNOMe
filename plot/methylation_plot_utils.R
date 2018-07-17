@@ -11,7 +11,7 @@ load_db <- function(fpath,extracols=c("regstart","regend")){
     bed.gr=GRanges(bed.tb)
     bed.gr
 }
-tabix_mfreq <- function(querypath,dbpath=NULL,cov=NULL,trinuc_exclude=NULL,verbose=TRUE){
+tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose=TRUE){
     mfreqcnames=c("chrom","start","strand","meth","unmeth","dinuc","trinuc")
     if (!is.null(dbpath)) {
         if (verbose) cat(paste0("reading regions defined by ",
@@ -31,12 +31,16 @@ tabix_mfreq <- function(querypath,dbpath=NULL,cov=NULL,trinuc_exclude=NULL,verbo
         if (verbose) cat(paste0("reading the entire data of ",querypath,"\n"))
         out.tb=read_tsv(querypath,col_names=mfreqcnames)
     }
-    if (verbose) cat("calculating coverage and frequency\n")
     if (!is.null(trinuc_exclude)){
+        if (verbose) cat(paste0("removing ",trinuc_exclude,"\n"))
         out.tb=out.tb[which(out.tb$trinuc!=trinuc_exclude),]
     }
+    if (verbose) cat("calculating coverage and frequency\n")
     out.tb$cov=out.tb$meth+out.tb$unmeth
-    if (!is.null(cov)) out.tb=out.tb[which(out.tb$cov>=cov),]
+    if (!is.null(cov)){
+        if (verbose) cat(paste0("removing sites with less than ",cov,"x coverage\n"))        
+        out.tb=out.tb[which(out.tb$cov>=cov),]
+    }
     out.tb$freq=out.tb$meth/out.tb$cov
     out.tb$end=out.tb$start
     na.omit(out.tb)
