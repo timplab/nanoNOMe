@@ -11,9 +11,7 @@ load_db <- function(fpath,extracols=c("regstart","regend")){
     bed.gr=GRanges(bed.tb)
     bed.gr
 }
-tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose=TRUE){
-    mfreqcnames=c("chrom","start","strand","meth","unmeth","dinuc","trinuc")
-    if (!is.null(dbpath)) {
+tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
         if (verbose) cat(paste0("reading regions defined by ",
                                 dbpath," in ",querypath,"\n"))
         command=paste("tabix",querypath,"-R",dbpath,sep=" ")
@@ -21,7 +19,28 @@ tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose
         if (verbose) cat("converting to tibble\n")
         region=do.call(rbind,strsplit(region.raw,"\t"))
         region.tb=as.tibble(region)
-        colnames(region.tb)=mfreqcnames
+        if (!is.null(col_names)) colnames(region.tb)=col_names
+        region.tb
+}
+
+tabix_mbed <- function(querypath,dbpath=NULL,verbose=TRUE){
+    mbedcnames=c("chrom","start","end","rname","mstring","scores","context")
+    if (!is.null(dbpath)) {
+        region.tb=tabix(querypath,dbpath,mbedcnames,verbose=verbose)
+        region.tb$start=as.numeric(region.tb$start)
+        region.tb$end=as.numeric(region.tb$end)
+        if (verbose) cat("removing redundant loci\n")
+        out.tb=unique(region.tb)
+    }else{
+        if (verbose) cat(paste0("reading the entire data of ",querypath,"\n"))
+        out.tb=read_tsv(querypath,col_names=mfreqcnames)
+    }
+}
+    
+tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose=TRUE){
+    mfreqcnames=c("chrom","start","strand","meth","unmeth","dinuc","trinuc")
+    if (!is.null(dbpath)) {
+        region.tb=tabix(querypath,dbpath,mfreqcnames,verbose=verbose)
         region.tb$meth=as.numeric(region.tb$meth)
         region.tb$unmeth=as.numeric(region.tb$unmeth)
         region.tb$start=as.numeric(region.tb$start)
