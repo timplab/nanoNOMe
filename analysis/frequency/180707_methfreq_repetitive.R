@@ -1,6 +1,7 @@
 #!/usr/bin/Rscript
 library(tidyverse)
 library(GenomicRanges)
+library(ggridges)
 library(GGally)
 source("../../plot/methylation_plot_utils.R")
 
@@ -49,7 +50,7 @@ MethByRegion <- function(pd,reg){
         pd.samp=pd[i,]
         cat(paste0(pd.samp$cell,":",pd.samp$calltype,"\n"))
         # read in the data
-        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg$filepath,
+        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg,
                         cov=covthr,trinuc_exclude=trinuc)
         # overlaps
         cat("getting methylation by region\n")
@@ -64,44 +65,99 @@ MethByRegion <- function(pd,reg){
         dat.ovl
     })
     dat.cat=do.call(rbind,dat.list)
-})
+}
 
 dat.list=lapply(reg.info$filepath,function(x){
     MethByRegion(pd,x)})
+
 dat.all=do.call(rbind,dat.list)
 
-cpg.plt=dat.plt[which(dat.plt$calltype=="cpg"),]
-gpc.plt=dat.plt[which(dat.plt$calltype=="gpc"),]
+dat.cpg=dat.all[which(dat.all$calltype=="cpg"),]
+dat.gpc=dat.all[which(dat.all$calltype=="gpc"),]
 
 # boxplot
 cat("plotting\n")
-cpg.box=ggplot(cpg.plt,aes(x=feature.type,
+cpg.box=ggplot(dat.cpg,aes(x=feature.type,
                          y=freq,color=samp))+
     geom_boxplot(alpha=0.5)+
     theme_bw()
-gpc.box=ggplot(gpc.plt,aes(x=feature.type,
+gpc.box=ggplot(dat.gpc,aes(x=feature.type,
                          y=freq,color=samp))+
     geom_boxplot(alpha=0.5)+
     theme_bw()
+makeridge <- function(data){
+    ggplot(data,aes(x=freq,y=factor(feature.type),fill=samp,color=samp))+
+        geom_density_ridges(alpha=0.1)+xlim(c(0,1))+
+        labs(title=data$calltype[1],
+             x="Methylation frequency",
+             y="Repeat type")+
+        theme_bw()
+}
+cpg.ridge=makeridge(dat.cpg)
+gpc.ridge=makeridge(dat.gpc)
 
-plotpath=file.path(plotdir,paste(regname,"boxplot_by_feature.pdf",sep="_"))
-pdf(plotpath,width=15,height=5,useDingbats=F)
-print(cpg.box)
-print(gpc.box)
-dev.off()
+if ( F ){
+    plotpath=file.path(plotdir,"repeats_boxplot_by_feature.pdf")
+    pdf(plotpath,width=9,height=5,useDingbats=F)
+    print(cpg.box)
+    print(gpc.box)
+    dev.off()
+}
+
+if ( F ){
+    plotpath=file.path(plotdir,"repeats_ridges_by_feature.pdf")
+    pdf(plotpath,width=9,height=5,useDingbats=F)
+    print(cpg.ridge)
+    print(gpc.ridge)
+    dev.off()
+}
+
+# how many in each type?
+x = group_by(dat.cpg,feature.type) %>%
+    summarize(n())
+
+makescatter <- function(data,plottype="duo"){
+    x = data %>% ungroup() %>%
+        select(-c("totcov","numsites","feature.type","calltype"))%>%
+        spread(samp,freq) %>% select(-"feature.index")%>%
+        na.omit()
+    if (plottype == "duo") {
+        g=ggduo(x,title=paste(data$calltype[1],data$feature.type[1],sep=" : "))
+    } else if (plottype == "pair") {
+        g=ggpairs(x,title=paste(data$calltype[1],data$feature.type[1],sep=" : "))
+    }
+    print(g)
+}
 
 
-if (F) {
-                                        # first start off iwth scatterplot
-    dat.scatter = dat.filt%>% ungroup() %>%select(-cpgnum)%>%
-        spread(sample,avgfreq)%>%select(-index.feature)
-    g.duo = ggduo(dat.scatter,)
-    g.pair = ggpairs(dat.scatter,)
-
-
+if (T) {
+    plotn=1000
+    plotpath=file.path(plotdir,"repeates_scatterplot.pdf")
     pdf(plotpath,width=10,height=10,useDingbats=F)
-    print(g.box)
-    print(g.duo)
-    print(g.pair)
+    # scatter plot
+    for (ftype in unique(dat.cpg$feature.type)){
+        cat(paste0("plotting ",ftype,"\n"))
+        cpg.sub=dat.cpg[which(dat.cpg$feature.type==ftype),]
+        gpc.sub=dat.gpc[which(dat.gpc$feature.type==ftype),]
+        # unique features that occur in all samples
+        fnum=bind_rows(cpg.sub,gpc.sub)%>%
+            group_by(feature.index)%>%
+            summarize(num=n())%>%
+            filter(num==dim(pd)[1])
+        if (dim(fnum)[1]>plotn){
+            cat("too many number of points, subsampling \n")
+            subsample=sample(fnum$feature.index,plotn)
+        } else {
+            subsample=fnum$feature.index
+        }
+        cpg.sub=cpg.sub[cpg.sub$feature.index %in% subsample,]
+        gpc.sub=gpc.sub[gpc.sub$feature.index %in% subsample,]
+        
+        # plot
+        cat("cpg\n")
+        makescatter(cpg.sub)
+        cat("gpc\n")
+        makescatter(gpc.sub)
+    }
     dev.off()
 }
