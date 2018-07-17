@@ -23,23 +23,27 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
         region.tb
 }
 
-mbedbycall <- function(mbed,verbose=T){
+mbedByCall <- function(mbed,verbose=T){
     if (verbose) cat("parsing data into single call per line\n")
     out.list=lapply(seq(dim(mbed)[1]),function(i){
         read=mbed[i,]
         mstring=read$mstring    
         call=str_extract_all(mstring,"[a-z]")[[1]]
         pos=cumsum(as.numeric(strsplit(mstring,"[a-z]")[[1]]))
-        tibble(chrom=read$chrom,
+        out=tibble(chrom=read$chrom,
                start=read$start+pos+1,
                end=start,
                qname=read$readname,
                mcall=call)
+        out$mcall[which(out$mcall=="m")]=1
+        out$mcall[which(out$mcall=="u")]=0
+        out$mcall=as.numeric(out$mcall)
+        na.omit(out)
     })
     do.call(rbind,out.list)
 }
     
-tabix_mbed <- function(querypath,dbpath=NULL,by=c("call","read"),verbose=TRUE){
+tabix_mbed <- function(querypath,dbpath=NULL,by=c("read","call"),verbose=TRUE){
     mbedcnames=c("chrom","start","end","readname","mstring","scores","context")
     if (!is.null(dbpath)) {
         region.tb=tabix(querypath,dbpath,mbedcnames,verbose=verbose)
@@ -51,11 +55,17 @@ tabix_mbed <- function(querypath,dbpath=NULL,by=c("call","read"),verbose=TRUE){
         if (verbose) cat(paste0("reading the entire data of ",querypath,"\n"))
         out.tb=read_tsv(querypath,col_names=mfreqcnames)
     }
-    if (by == "call"){
-        mbedbycall(out.tb,verbose=verbose) 
-    }else if (by == "read") {
-        out.tb
+    parsembed=function(mbed.tb,what,verbose=TRUE){
+        if (what == "call"){
+            mbedByCall(out.tb,verbose=verbose)
+        } else if (what == "read"){
+            mbed.tb
+        }
     }
+    if (length(by)>1){
+        lapply(by,function(x){parsembed(out.tb,x,verbose)})
+    }else{ parsembed(out.tb,by) }
+
 }
     
 tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose=TRUE){
