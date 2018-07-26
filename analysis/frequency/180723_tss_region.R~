@@ -92,7 +92,7 @@ if (plotwhat == "correlation"){
     sub=sample(seq(dim(dat.plt)[1]),subn)
     dat.sub=dat.plt[sub,]
     # plot
-    g.pairs=ggpairs(dat.plt,aes(alpha=0.5))
+    g.pairs=ggpairs(dat.plt)
     g.duo=ggduo(dat.sub)
     pdf(plotpath,width=6,height=4,useDingbats=F)
     print(g.pairs)
