@@ -12,10 +12,29 @@ load_db <- function(fpath,extracols=c("regstart","regend")){
     bed.gr
 }
 tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
-        if (verbose) cat(paste0("reading regions defined by ",
-                                dbpath," in ",querypath,"\n"))
-        command=paste("tabix",querypath,"-R",dbpath,sep=" ")
-        region.raw=system(command,intern=TRUE)
+        if ("GRanges" %in% class(dbpath)){
+            # input region is a GRanges object
+            if (verbose) cat(paste0("reading regions defined by GRanges object",
+                                    " in ",querypath,"\n"))
+            require(parallel)
+            corenum=detectCores()-2
+            cl = makeCluster(corenum,type="FORK")
+            if (verbose) cat(paste0("using ",corenum," cores\n"))
+            raw.list = parLapply(cl,dbpath,function(reg.gr){
+                reg.char=paste0(as.character(seqnames(reg.gr)),":",
+                                as.character(start(reg.gr)),"-",
+                                as.character(end(reg.gr)))
+                command=paste("tabix",querypath,reg.char,sep=" ")
+                system(command,intern=TRUE)
+            })
+            region.raw = do.call(rbind,raw.list)
+            stopCluster(cl)
+        } else {
+            if (verbose) cat(paste0("reading regions defined by ",
+                                    dbpath," in ",querypath,"\n"))
+            command=paste("tabix",querypath,"-R",dbpath,sep=" ")
+            region.raw=system(command,intern=TRUE)
+        }
         if (verbose) cat("converting to tibble\n")
         region=do.call(rbind,strsplit(region.raw,"\t"))
         region.tb=as.tibble(region)
@@ -23,9 +42,10 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
         region.tb
 }
 
-mbedByCall <- function(mbed,verbose=T){
+mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
     if (verbose) cat("parsing data into single call per line\n")
     out.list=lapply(seq(dim(mbed)[1]),function(i){
+        # if (verbose) cat(paste0(i,"\n"))
         read=mbed[i,]
         mstring=read$mstring    
         call=str_extract_all(mstring,"[a-z]")[[1]]
@@ -38,7 +58,15 @@ mbedByCall <- function(mbed,verbose=T){
         out$mcall[which(out$mcall=="m")]=1
         out$mcall[which(out$mcall=="u")]=0
         out$mcall=as.numeric(out$mcall)
-        na.omit(out)
+        out=na.omit(out)
+        if ( dim(out)[1] == 0 ) return(out)
+        if ( smooth == TRUE ){
+            require(locfit)
+            smooth = locfit(mcall ~ lp(start, nn = ns, h = h), data = out, maxk =10000)
+            pp = preplot(smooth,where="data",band="local")
+            out$smooth = pp$trans(pp$fit)
+        }
+        out
     })
     do.call(rbind,out.list)
 }

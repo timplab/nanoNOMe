@@ -15,6 +15,8 @@ pd=tibble(cell=cell,type=c("cpg","gpc"),filepath=c(cpgpath,gpcpath))
 plotdir=file.path(root,"plots/regions")
 dbname="tss"
 #dbname="ctcf"
+dbname="tss_shuffle"
+dbname="genebody"
 if ( dbname=="tss"){
     db.fp=file.path(root,"database/hg38/hg38_genes.TSS.2000bp.bed")
     names.fp=file.path(root,"database/hg38/hg38_genes.bed")
@@ -25,6 +27,14 @@ if ( dbname=="tss"){
 }else if (dbname=="ctcf"){
     db.fp=file.path(root,"database/gm12878/ctcf/GM12878_ctcf.2000bp.bed")
     plotpath=file.path(plotdir,"GM12878_CTCF_regions.pdf")
+}else if (dbname == "tss_shuffle"){
+    db.fp=file.path(root,"database/hg38/hg38_genes.TSS.2000bp.shuffle.bed")
+    names.fp=file.path(root,"database/hg38/hg38_genes.bed")
+    names=read_tsv(names.fp,col_names=c("chrom","start","end","id","score","strand","name","fxn"))
+}else if (dbname == "genebody") {
+    db.fp=file.path(root,"database/hg38/hg38_genes.bed")
+    names.fp=file.path(root,"database/hg38/hg38_genes.bed")
+    names=read_tsv(names.fp,col_names=c("chrom","start","end","id","score","strand","name","fxn"))
 }
 
 if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
@@ -55,13 +65,13 @@ sig.sub = db.sig[1:1000,]
 
 # do TSS/binding region scatterplots
 if ( TRUE ){
-    if (dbname == "tss"){
+    if (dbname == "tss" | dbname == "tss_shuffle"){
         sub.tb = as.tibble(as.data.frame(sig.sub))
+        window=1000
         tss.tb = transmute(sub.tb,
                            seqnames,strand,name,
-                           start=ifelse(strand=="-",regstart,regend),
+                           start=ifelse(strand=="-",start+window,start+window+1),
                            end=start)
-        window=1000
         snum=5
         sections=seq(0,window,length.out=snum)
         labels=c(1,2,3,4,5,6)#c("one","two","three","four","five","six")
@@ -90,7 +100,7 @@ if ( TRUE ){
             facet_grid(lab~.)+
             geom_point(size=0.5,alpha=0.5)+
             theme_bw()
-        plotpath = file.path(plotdir,paste0("GM12878_",dbname,"_scatter_sections.pdf",sep="_"))
+        plotpath = file.path(plotdir,paste0("GM12878_",dbname,"_scatter_sections.pdf"))
         pdf(plotpath,width=4,height=10,useDingbats=F)    
         print(g)
         dev.off()
@@ -107,12 +117,10 @@ if ( TRUE ){
         g = ggplot(regmeth,aes(x=gpc,y=cpg))+
             geom_point(size=0.5,alpha=0.5)+
             theme_bw()
-        plotpath = file.path(plotdir,paste0("GM12878_",dbname,"_scatter.pdf",sep="_"))
+        plotpath = file.path(plotdir,paste0("GM12878_",dbname,"_scatter.pdf"))
         pdf(plotpath,width=4,height=3,useDingbats=F)    
         print(g)
         dev.off()
-        # random
-        
     }
     if (dbname == "ctcf") {
         regions = resize(db.gr,width = 400, fix = "center")
@@ -127,6 +135,23 @@ if ( TRUE ){
             geom_point(size=0.5,alpha=0.5)+
             theme_bw()
         plotpath = file.path(plotdir,"GM12878_ctcf_scatter.pdf")
+        pdf(plotpath,width=4,height=3,useDingbats=F)    
+        print(g)
+        dev.off()
+    }
+    if (dbname == "genebody") {
+        # entire region
+        regmeth.list = lapply(seq_along(dat.db),function(i){
+            x = dat.db[[i]]
+            getRegionMeth(x,db.gr)%>%select(-totcov,-numsites)%>%
+                mutate(calltype=pd$type[i])
+        })
+        regmeth = do.call(rbind,regmeth.list) %>%
+            spread(calltype,freq)
+        g = ggplot(regmeth,aes(x=gpc,y=cpg))+
+            geom_point(size=0.5,alpha=0.5)+
+            theme_bw()
+        plotpath = file.path(plotdir,paste0("GM12878_",dbname,"_scatter.pdf"))
         pdf(plotpath,width=4,height=3,useDingbats=F)    
         print(g)
         dev.off()

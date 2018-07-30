@@ -23,9 +23,18 @@ db=$dbdir/hg38_cgi.txt.gz
   wget http://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/cpgIslandExtUnmasked.txt.gz \
     -O $db
 
+# enhancers
+db=$dbdir/hg19_enhancers.txt.gz
+[ -e $db ]||\
+  wget http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/vistaEnhancers.txt.gz \
+    -O $db
+
+
 # gm12878
 cell=gm12878
 samp=$(echo "$cell" | tr "[a-z]" "[A-Z]")
+dbdir=$root/$cell
+[ -e $dbdir ]||mkdir $dbdir
 #celldir=$root/$cell
 #dbdir=$celldir/$dbname
 #[ -e $dbdir ]||mkdir -p $dbdir
@@ -43,3 +52,12 @@ samp=$(echo "$cell" | tr "[a-z]" "[A-Z]")
 #  wget https://www.encodeproject.org/files/ENCFF350QZU/@@download/ENCFF350QZU.tsv -O $rep2
 #fi
 #
+# enhancers
+# taken from enhancer atlas
+dir=$dbdir/enhancer
+[ -e $dir ]||mkdir $dir
+db=$dir/${samp}_enhancer_promoter_hg19.txt
+[ -e $db ]||\
+  wget http://enhanceratlas.org/data/AllEPs/human/GM12878_EP.txt \
+  -O $db
+
