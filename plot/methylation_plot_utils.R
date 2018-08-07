@@ -54,11 +54,13 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
                start=read$start+pos+1,
                end=start,
                qname=read$readname,
-               mcall=call)
+               mcall=call,
+               score=as.numeric(strsplit(read$scores,",")[[1]])
+               )
         out$mcall[which(out$mcall=="m")]=1
         out$mcall[which(out$mcall=="u")]=0
         out$mcall=as.numeric(out$mcall)
-        out=na.omit(out)
+#        out=na.omit(out)
         if ( dim(out)[1] == 0 ) return(out)
         if ( smooth == TRUE ){
             require(locfit)
