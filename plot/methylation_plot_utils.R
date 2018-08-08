@@ -55,7 +55,8 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
                end=start,
                qname=read$readname,
                mcall=call,
-               score=as.numeric(strsplit(read$scores,",")[[1]])
+               score=as.numeric(strsplit(read$scores,",")[[1]]),
+               context=strsplit(read$context,",")[[1]]
                )
         out$mcall[which(out$mcall=="m")]=1
         out$mcall[which(out$mcall=="u")]=0
