@@ -9,8 +9,10 @@ cell="GM12878"
 pd = tibble(cell=c(rep(cell,2),"GM12878_wgs"),type=c("cpg","gpc","cpg"),
             filepath=file.path(datroot,paste(cell,type,"pooled.meth.bed.gz",sep=".")))
 if (T) {
-    pd = tibble(cell=c("GM12878_wgs","GM12878_nome","GM12878_nome","GM12878_nome"),type=c("cpg","cpg","cpg-new","gpc"),
+    pd = tibble(cell=c("GM12878_wgs","GM12878_wgs","GM12878_nome","GM12878_nome","GM12878_nome"),
+                type=c("cpg","gpc","cpg","cpg-new","gpc"),
                 filepath=c("/dilithium/Data/Nanopore/projects/gm12878/analysis/mcall-cpg/GM12878.8.cpg.meth.tsv",
+                           "/dilithium/Data/Nanopore/projects/gm12878/analysis/mcall-gpc/GM12878.9.gpc.meth.tsv.subset",
                            file.path(root,"gm12878/ngmlr/mcall-cpg/180322_GM12878_NOMe_rep3/180322_GM12878_NOMe_rep3.23.cpg.meth.tsv"),
                            file.path(root,"gm12878/ngmlr/mcall-cpg-new/180322_GM12878_NOMe_rep3/180322_GM12878_NOMe_rep3.23.cpg.meth.tsv"),
                            file.path(root,"gm12878/ngmlr/mcall-gpc/180322_GM12878_NOMe_rep3/180322_GM12878_NOMe_rep3.23.gpc.meth.tsv")))
@@ -20,7 +22,8 @@ if (T) {
         x[!grepl("GCG",x$sequence),]%>%
             transmute(calltype=pd$type[i],
                       sample=pd$cell[i],
-                      score=log_lik_ratio)
+                      score=log_lik_ratio)%>%
+            sample_n(10000)
     })
     plt.tb = do.call(rbind,filt.list)
     plotpath = file.path(plotdir,"methylation_call_distribution_newvsold.pdf")

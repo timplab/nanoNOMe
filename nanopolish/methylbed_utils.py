@@ -36,7 +36,7 @@ class MethRead :
             calldict[self.make_key(pos)]=methylCall(
                     pos,
                     is_meth,
-                    self.ratios[i],
+                    float(self.ratios[i]),
                     self.seqs[i])
         return calldict
     def getArray(self,calldict) :
