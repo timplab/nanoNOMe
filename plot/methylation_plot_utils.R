@@ -16,36 +16,42 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             # input region is a GRanges object
             if (verbose) cat(paste0("reading regions defined by GRanges object",
                                     " in ",querypath,"\n"))
-            require(parallel)
             corenum=detectCores()-2
-            cl = makeCluster(corenum,type="FORK")
             if (verbose) cat(paste0("using ",corenum," cores\n"))
-            raw.list = parLapply(cl,dbpath,function(reg.gr){
+            raw.list = mclapply(mc.cores=corenum,dbpath,function(reg.gr){
+                if (verbose) cat(paste0(as.character(reg.gr),"\n"))
                 reg.char=paste0(as.character(seqnames(reg.gr)),":",
                                 as.character(start(reg.gr)),"-",
                                 as.character(end(reg.gr)))
                 command=paste("tabix",querypath,reg.char,sep=" ")
-                system(command,intern=TRUE)
+                region.raw = system(command,intern=TRUE)
+                if (verbose) cat("converting to tibble\n")
+                region=do.call(rbind,strsplit(region.raw,"\t"))
+                region.tb=as.tibble(region)
+                if (!is.null(col_names)) colnames(region.tb)=col_names
+                region.tb
             })
-            region.raw = do.call(rbind,raw.list)
-            stopCluster(cl)
+            if (verbose) cat("joining\n")
+            region.tb = do.call(rbind,raw.list)
         } else {
             if (verbose) cat(paste0("reading regions defined by ",
                                     dbpath," in ",querypath,"\n"))
             command=paste("tabix",querypath,"-R",dbpath,sep=" ")
             region.raw=system(command,intern=TRUE)
+            if (verbose) cat("converting to tibble\n")
+            region=do.call(rbind,strsplit(region.raw,"\t"))
+            region.tb=as.tibble(region)
+            if (!is.null(col_names)) colnames(region.tb)=col_names
         }
-        if (verbose) cat("converting to tibble\n")
-        region=do.call(rbind,strsplit(region.raw,"\t"))
-        region.tb=as.tibble(region)
-        if (!is.null(col_names)) colnames(region.tb)=col_names
         region.tb
 }
 
 mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
     if (verbose) cat("parsing data into single call per line\n")
-    out.list=lapply(seq(dim(mbed)[1]),function(i){
-        # if (verbose) cat(paste0(i,"\n"))
+    corenum=(detectCores()-2)/2
+    if (verbose) cat(paste0("using ",corenum," cores\n"))
+    out.list=mclapply(mc.cores=corenum,seq(dim(mbed)[1]),function(i){
+        if (verbose) cat(paste0(i,"\n"))
         read=mbed[i,]
         mstring=read$mstring    
         call=str_extract_all(mstring,"[a-z]")[[1]]
@@ -61,7 +67,6 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
         out$mcall[which(out$mcall=="m")]=1
         out$mcall[which(out$mcall=="u")]=0
         out$mcall=as.numeric(out$mcall)
-#        out=na.omit(out)
         if ( dim(out)[1] == 0 ) return(out)
         if ( smooth == TRUE ){
             require(locfit)
@@ -69,9 +74,11 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
             pp = preplot(smooth,where="data",band="local")
             out$smooth = pp$trans(pp$fit)
         }
+        if (verbose) cat(paste0("done with ",i,"\n"))
         out
     })
-    do.call(rbind,out.list)
+    calls = do.call(rbind,out.list)
+    calls
 }
     
 tabix_mbed <- function(querypath,dbpath=NULL,by=c("read","call"),verbose=TRUE){

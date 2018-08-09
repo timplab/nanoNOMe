@@ -87,4 +87,5 @@ if __name__=="__main__":
         newbed=args.func(bedline,args)
         if newbed.start >= 0 :
             newbed.printbed(args.out)
+    bedfh.close()
 
