@@ -172,6 +172,7 @@ def getPerReadAverage(args,in_fh) :
         # filter out calls with unwanted seq
         filteridx = [idx for idx,s in enumerate(seqs) if args.exclude not in s]
         calls_all = np.array([x.call for x in read.calldict.values()])[filteridx]
+        ratios = np.array([x.ratio for x in read.calldict.values()])[filteridx]
         # filter out unconfident calls
         calls = [ x for x in calls_all if x != -1 ]
         # drop empty call strings
@@ -181,7 +182,8 @@ def getPerReadAverage(args,in_fh) :
                 read.start,
                 read.end,
                 read.qname,
-                np.mean(calls),'.',
+                np.mean(ratios),'.',
+                np.mean(calls),
                 len(calls)]]),file=args.out)
       
 def main() :
