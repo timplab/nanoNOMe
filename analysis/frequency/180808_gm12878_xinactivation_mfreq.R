@@ -21,17 +21,17 @@ if (what == "average") {
     plotpre = file.path(root,"plots/readlevel/180808_GM12878_XvsAuto_mfreq")
     datroot=file.path(root,"pooled/methylation/mfreq_all")
     pd = tibble(cell=rep(c(cell,"GM12878_wgs","GM12878_BSseq_ENCLB898WPW","MCF10A"),each=2),type=rep(c("cpg","gpc"),4),
-                filepath=file.path(datroot,paste(cell,type,"methfreq.txt.gz",sep=".")))
+                filepath=file.path(datroot,paste(cell,type,"methfreq.txt.gz",sep="."))) %>%
+        filter(file.exists(filepath))
     dat.list = mclapply(mc.cores=4,pd$filepath,function(x){
         tabix_mfreq(x,chrom.gr)
     })
     call.reads = lapply(seq_along(dat.list),function(i){
         x = dat.list[[i]]
-        if("tbl" %in% class(x)){
-            x%>%mutate(mcall=freq,
-                       cell=pd$cell[i],
-                       calltype=pd$type[i])%>%
-                filter(cov>10)}
+        x%>%mutate(mcall=freq,
+                   cell=pd$cell[i],
+                   calltype=pd$type[i])%>%
+            filter(cov>10)
     })
     calls.tb = do.call(rbind,call.reads)
 }
