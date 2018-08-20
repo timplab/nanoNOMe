@@ -1,0 +1,14 @@
+#!/bin/bash -l
+
+echo "slurm job ID : $SLURM_JOBID"
+com="$@"
+# support for array jobs
+if [ ${SLURM_ARRAY_TASK_ID} ];then
+  com=${com//"%a"/${SLURM_ARRAY_TASK_ID}}
+fi
+echo $com
+eval $com
+
+
+#SBATCH
+echo "Finished slurm job $SLURM_JOBID"
