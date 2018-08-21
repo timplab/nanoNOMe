@@ -7,7 +7,15 @@ if [ ${SLURM_ARRAY_TASK_ID} ];then
   com=${com//"%a"/${SLURM_ARRAY_TASK_ID}}
 fi
 echo $com
+start=$(date +%s)
+echo start time : $start
+
 eval $com
+
+end=$(date +%s);
+echo finish time : $end;
+del=$((${end}-${start}));
+echo time taken : $del s
 
 
 #SBATCH
