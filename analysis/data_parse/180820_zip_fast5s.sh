@@ -5,9 +5,9 @@ root=/shared/data
 rawdir=$root/raw/$cellname/fast5
 outdir=$root/tar
 outzip=$outdir/${cell}_nanoNOMe.zip
-batch=../../script/batchcommand.scr
+batch=../../util/batchcommand.scr
 
 log=$outzip.log
-com="cd $rawdir && zip -vr $outzip ."
+com="python -u ../../util/fast5zip_accessor.py zip -v -z $outzip -d $rawdir > $outzip.filelist.txt"
 echo $com
-sbatch -e $log -o $log -t 48:0:0 $batch "$com"
+sbatch -e $log -o $log -t 200:0:0 $batch "$com"

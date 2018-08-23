@@ -12,9 +12,9 @@ echo start time : $start
 
 eval $com
 
-end=$(date +%s);
-echo finish time : $end;
-del=$((${end}-${start}));
+end=$(date +%s)
+echo finish time : $end
+del=$((${end}-${start}))
 echo time taken : $del s
 
 
