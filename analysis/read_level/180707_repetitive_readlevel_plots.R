@@ -40,9 +40,11 @@ if (T){
     plotpath=file.path(plotdir,"LINE_regions_readlevel.pdf")
     pdf(plotpath,useDingbats=F)
     for (i in seq_along(pltwin.gr)){
+        print(i)
         reg.plt = pltwin.gr[i]
         reg = as.tibble(db[i])
         calls.reg = lapply(calls.list,function(x){
+            
             y = x[overlapsAny(GRanges(x),reg.plt),]%>%
                 na.omit()
             y$y = factor(y$qname)
@@ -52,7 +54,7 @@ if (T){
             y
         })
         plt.tb = do.call(rbind,calls.reg)
-        g = ggplot(calls.reg,aes(x=start,y=factor(qname),color=mcall))+
+        g = ggplot(plt.tb,aes(x=start,y=y,color=mcall))+
             facet_grid(cell~calltype)+
             geom_point(alpha=0.5,size=0.5)+
             geom_rect(inherit.aes=F,data=reg,alpha=0.2,
