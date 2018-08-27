@@ -15,19 +15,11 @@ if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
 datroot=file.path(root,"pooled/methylation/mfreq_all")
 regdir=file.path(root,"database/hg38")
 # get file paths of data
-cells=c("MCF10A","MCF7","MDAMB231")
+cells=c("GM12878","GM12878_wgs","GM12878_BSseq_ENCLB794YYH","GM12878_BSseq_ENCLB898WPW")
 fpaths=tibble(cell=cells,
           cpg=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz")),
           gpc=file.path(datroot,paste0(cell,".gpc.methfreq.txt.gz")))
 pd=gather(fpaths,key=calltype,value=filepath,-cell)
-
-# validation group (illumina)
-if (F) {
-    illpd=tibble(cell="GM12878_illumina",calltype=c("cpg","gpc"),
-                 filepath=file.path("/dilithium/Data/Nanopore/projects/nomeseq/analysis/validation/scNOMe/methfreq",
-                                    paste("GM12878_sample",calltype,"methfreq.txt.gz",sep=".")))
-    pd=bind_rows(pd,illpd)
-}
 
 # regions
 if (T){
@@ -39,10 +31,8 @@ if (T){
 #read in regions
 cat("reading in the region\n")
 extracols="regtype"
-db=lapply(reg.info$filepath,function(x){
-    load_db(x,extracols)})
-covthr=2
-trinuc="GCG"
+#db=lapply(reg.info$filepath,function(x){
+#    load_db(x,extracols)})
 
 MethByRegion <- function(pd,reg){
     cat(paste0(reg,"\n"))
@@ -50,8 +40,7 @@ MethByRegion <- function(pd,reg){
         pd.samp=pd[i,]
         cat(paste0(pd.samp$cell,":",pd.samp$calltype,"\n"))
         # read in the data
-        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg,
-                        cov=covthr,trinuc_exclude=trinuc)
+        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg)
         # overlaps
         cat("getting methylation by region\n")
         db=load_db(reg,extracols)
@@ -67,10 +56,7 @@ MethByRegion <- function(pd,reg){
     dat.cat=do.call(rbind,dat.list)
 }
 
-dat.list=lapply(reg.info$filepath,function(x){
-    MethByRegion(pd,x)})
-
-dat.all=do.call(rbind,dat.list)
+dat.all=MethByRegion(pd,reg.info$filepath[which(reg.info$regtype=="LINE")])
 
 dat.spread = dat.all %>%
     select(-totcov,-numsites)%>%
@@ -166,7 +152,7 @@ if (F) {
 }
 
 # just plot LINE elements
-if (F) {
+if (T) {
     plotpre=file.path(plotdir,"bcan_LINE")
     dat.sub = dat.all[which(dat.all$feature.type=="LINE"),]
     # densities
@@ -188,12 +174,12 @@ if (F) {
         print(p)
     }
     dev.off()
-    # 2D density pairwise
+    # scatters
     dat.spread = dat.sub%>%select(-totcov,-numsites)%>%
         spread(samp,freq)%>%na.omit()
     combos = as.tibble(t(combn(unique(dat.sub$samp),2)))
     names(combos)=c("one","two")
-    plotpath = paste0(plotpre,"_pairwise.pdf")
+    plotpath = paste0(plotpre,"_scatter.pdf")
     pdf(plotpath,useDingbats=F)
     for (i in seq(dim(combos)[1])){
         print(i)
@@ -202,21 +188,9 @@ if (F) {
         for ( mod in c("cpg","gpc")){
             dat.plt = dat.spread[which(dat.spread$calltype==mod),]%>%
                 select(feature.index,calltype,one=one,two=two)
-            n = 75
-            breaks=seq(0,1,length.out=n)
-            dat.plt$one = cut(dat.plt$one,breaks)
-            dat.plt$two = cut(dat.plt$two,breaks)
-            levels(dat.plt$one)=levels(dat.plt$two)=breaks[1:length(breaks)-1]
-            hist = dat.plt%>%group_by(one,two)%>%
-                summarize(count=n())%>%ungroup()%>%
-                mutate(one=as.numeric(as.character(one)),
-                       two=as.numeric(as.character(two)))
-            cutoff=round(quantile(hist$count,0.9))
-            hist = hist%>%mutate(count=ifelse(count>cutoff,cutoff,count))
-            g = ggplot(hist,aes(x=one,y=two))+
-                geom_tile(aes(fill=count))+
-#                geom_hex(aes(fill=log(..count..)),bins=100)+
-                scale_fill_distiller(palette="Spectral")+
+            g = ggplot(dat.plt,aes(x=one,y=two))+
+                geom_hex(aes(fill=log(..count..)),bins=100)+
+                scale_colour_brewer(palette="YlOrRd")+
                 theme_bw()+lims(x=c(0,1),y=c(0,1))+
                 labs(title=mod,x=one,y=two)
             print(g)
@@ -224,49 +198,5 @@ if (F) {
         
     }
     dev.off()
-}
-# selecting out some specific regions
-if (T) {
-    db.sub = db[[which(reg.info$regtype=="LINE")]]
-    dat.sub = dat.all[which(dat.all$feature.type=="LINE"),]%>%
-        filter(totcov>50,numsites>20)
-    dat.spread = dat.sub%>%select(-totcov,-numsites)%>%
-        spread(samp,freq)%>%na.omit()
-    combos = as.tibble(t(combn(unique(dat.sub$samp),2)))
-    names(combos)=c("one","two")
-    dat.sig=tibble()
-    for (i in seq(dim(combos)[1])){
-        print(i)
-        sampone=combos$one[i]
-        samptwo=combos$two[i]
-        del.cpg = dat.spread[which(dat.spread$calltype=="cpg"),] %>%
-            select(feature.index,calltype,one=sampone,two=samptwo) %>%
-            mutate(del=abs(one-two))%>%filter(del>0.5)%>%
-            mutate(sampone=sampone,samptwo=samptwo)
-        del.gpc = dat.spread[which(dat.spread$calltype=="gpc"),] %>%
-            select(feature.index,calltype,one=sampone,two=samptwo) %>%
-            mutate(del=abs(one-two))%>%filter(del>0.1)%>%
-            mutate(sampone=sampone,samptwo=samptwo)
-        del = del.cpg%>% select(feature.index,sampone,samptwo,cpg=del)
-        del$gpc = del.gpc$del[match(del$feature.index,del.gpc$feature.index)]
-        del = del%>%na.omit()
-        dat.sig = dat.sig%>%bind_rows(del)
-    }
-    dat.sig = dat.sig %>% arrange(desc(gpc),desc(cpg))
-    db.tb = as.tibble(db.sub)
-    db.sig = db.sub[dat.sig$feature.index]
-    out = db.tb[dat.sig$feature.index,]%>%
-        bind_cols(dat.sig)%>%
-        select(seqnames,start,end,id,score,strand,sampone,samptwo,cpg,gpc)
-    outpath=file.path(plotdir,"LINE_regions.bed")
-    if (F) write_tsv(out,outpath,col_names=F)
-}
-# plot these regions
-if (T){
-    win=1000
-    pltwin.gr = resize(db.sig,width=width(db.sig)+win,fix="center")
-    for (i in seq_along(pltwin.gr)){
-        pltreg = pltwin.gr[i]
-    }
-    
+
 }

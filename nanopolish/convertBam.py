@@ -10,6 +10,8 @@ from methylbed_utils import MethRead
 import pysam
 import re
 import multiprocessing as mp
+import time
+start_time = time.time()
 
 def parseArgs() :
     # dir of source code
@@ -85,16 +87,26 @@ def change_sequence(bam,methread,mod="cpg") :
     
     bam.query_sequence = ''.join(seq)
     return bam
+
 # https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
-def listener(q,inbam,outbam) :
+def listener(q,inbam,outbam,verbose=False) :
     '''listens for messages on the q, writes to file. '''
+    if verbose : print("writing output to {}".format(outbam),file=sys.stderr)
     with pysam.AlignmentFile(inbam,'rb') as fh :
         f = pysam.AlignmentFile(outbam, 'wb',template = fh) 
+    qname_list= list()
     while 1:
         m = q.get()
         if m == 'kill':
             break
-        f.write(pysam.AlignedSegment.fromstring(m,f.header))
+        read = pysam.AlignedSegment.fromstring(m,f.header)
+        if read.query_name not in qname_list : 
+            if verbose: print(read.query_name,file=sys.stderr)
+            qname_list.append(read.query_name)
+            f.write(read)
+        else : 
+            if verbose: print("{} already written".format(read.query_name),file=sys.stderr)
+    if verbose : print("total {} reads processed".format(len(qname_list)),file=sys.stderr)
     f.close()
 
 def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
@@ -106,10 +118,8 @@ def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
     cpg_dict = read_tabix(cpgpath,window)
     if verbose : print("reading {} from gpc data".format(window),file=sys.stderr)
     gpc_dict = read_tabix(gpcpath,window)
-    out_list = list()
     if verbose : print("converting bams in {}".format(window),file=sys.stderr)
     i = 0
-    out_list = list()
     for qname in bam_dict.keys() :
         try :
             cpg = cpg_dict[qname]
@@ -117,7 +127,6 @@ def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
         except KeyError : 
             continue
         i += 1
-        if verbose: print(qname,file=sys.stderr)
         # reset the sequence
         refseq = bam_dict[qname].get_reference_sequence()
         bam_dict[qname].query_sequence = refseq
@@ -136,9 +145,9 @@ def main() :
     manager = mp.Manager()
     q = manager.Queue()
     pool = mp.Pool(processes=args.threads)
+    if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     # watcher for output
-    if args.verbose : print("writing output to {}".format(args.out),file=sys.stderr)
-    watcher = pool.apply_async(listener,(q,args.bam,args.out))
+    watcher = pool.apply_async(listener,(q,args.bam,args.out,args.verbose))
     jobs = [ pool.apply_async(convertBam,
         args = (args.bam,args.cpg,args.gpc,win,args.verbose,q))
         for win in windows ]
@@ -146,6 +155,7 @@ def main() :
     # done
     q.put('kill')
     pool.close()
+    if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
 
 if __name__=="__main__":
     main()
