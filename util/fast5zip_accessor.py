@@ -111,7 +111,10 @@ def index_main(args) :
     for line in args.readdb :
         i+=1
         fields = line.strip().split("\t")
-        readdb[fields[1].split("/")[-1]] = fields[0]
+        try :
+            readdb[fields[1].split("/")[-1]] = fields[0]
+        except IndexError : 
+            continue
 #        if i == 10000 : break
     ts2 = datetime.datetime.now()
     if args.verbose : print("{} seconds taken to read in readdb".format(
