@@ -137,7 +137,7 @@ tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose
 getCenter <- function(db.gr){
     resize(shift(db.gr,shift=width(db.gr)/2),width=1,ignore.strand=T)
 }
-getRegionMeth <- function(query,subject,verbose=TRUE){
+getRegionMeth <- function(query,subject,thr=2,verbose=TRUE){
     if (verbose) cat("converting data to GRanges if not supplied as them\n")
     if (class(query)[1] != "GRanges") query=GRanges(query)
     if (class(subject)[1] != "GRanges") subject=GRanges(subject)
@@ -147,7 +147,7 @@ getRegionMeth <- function(query,subject,verbose=TRUE){
                    cov=query$cov[queryHits(ovl)],
                    feature.index=subjectHits(ovl))
     if (verbose) cat("calculating methylation by region\n")
-    group_by(freq.tb,feature.index)%>%
+    freq.tb[which(freq.tb$cov>=thr),] %>% group_by(feature.index)%>%
         summarize(totcov=sum(cov),
                   numsites=n(),
                   freq=mean(freq))

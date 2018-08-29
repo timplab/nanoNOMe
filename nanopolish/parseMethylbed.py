@@ -54,6 +54,21 @@ def parseArgs() :
         args.motif="GC"
     return args
 
+def printsite(stats,out):
+    print("{}\t{}\t{}\t{}".format(stats.rname,stats.pos,
+        stats.num_reads,stats.num_methylated),file=out)
+def printcyto(stats,mod,out):
+    if mod=="cpg":
+        motif="CG"
+    elif mod =="gpc" :
+        motif="GC"
+    conind=stats.seq.index(motif)
+    context=stats.seq[conind:conind+4]
+    print("{}\t{}\t*\t{}\t{}\tCG\t{}".format(stats.rname,stats.pos,
+        stats.num_methylated,
+        stats.num_reads-stats.num_methylated,
+        context),file=out)
+
 class SiteStats:
     def __init__(self,methcall,chrom):
         self.rname=chrom
@@ -80,20 +95,6 @@ class SiteStats:
             self.num_methylated,
             self.num_reads-self.num_methylated,
             motifcontext,tricontext]]),file=out)
-def printsite(stats,out):
-    print("{}\t{}\t{}\t{}".format(stats.rname,stats.pos,
-        stats.num_reads,stats.num_methylated),file=out)
-def printcyto(stats,mod,out):
-    if mod=="cpg":
-        motif="CG"
-    elif mod =="gpc" :
-        motif="GC"
-    conind=stats.seq.index(motif)
-    context=stats.seq[conind:conind+4]
-    print("{}\t{}\t*\t{}\t{}\tCG\t{}".format(stats.rname,stats.pos,
-        stats.num_methylated,
-        stats.num_reads-stats.num_methylated,
-        context),file=out)
 
 def getFreq(args,in_fh):
     sites=dict()

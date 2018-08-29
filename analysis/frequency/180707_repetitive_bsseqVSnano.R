@@ -4,18 +4,22 @@ library(GenomicRanges)
 library(ggridges)
 library(GGally)
 source("../../plot/methylation_plot_utils.R")
+parser="../../nanopolish/parseMethylFreq.py"
 
 # set this to TRUE to remove unnecessary objects throughout the process
 limitedmem=TRUE
+cores = detectCores()-2
 
 # set directories
+ref = "/mithril/Data/NGS/Reference/hg38_noalt/hg38_noalt.fa"
 root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
 plotdir=file.path(root,"plots/repeats")
 if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
 datroot=file.path(root,"pooled/methylation/mfreq_all")
 regdir=file.path(root,"database/hg38")
 # get file paths of data
-cells=c("GM12878","GM12878_wgs","GM12878_BSseq_ENCLB794YYH","GM12878_BSseq_ENCLB898WPW")
+#cells=c("GM12878","GM12878_wgs","GM12878_BSseq_ENCLB794YYH","GM12878_BSseq_ENCLB898WPW")
+cells=c("GM12878","GM12878_BSseq_ENCLB794YYH")
 fpaths=tibble(cell=cells,
           cpg=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz")),
           gpc=file.path(datroot,paste0(cell,".gpc.methfreq.txt.gz")))
@@ -31,36 +35,86 @@ if (T){
 #read in regions
 cat("reading in the region\n")
 extracols="regtype"
-#db=lapply(reg.info$filepath,function(x){
-#    load_db(x,extracols)})
+db=lapply(reg.info$filepath,function(x){
+    load_db(x,extracols)})
 
-MethByRegion <- function(pd,reg){
-    cat(paste0(reg,"\n"))
-    dat.list=lapply(seq(dim(pd)[1]),function(i){
-        pd.samp=pd[i,]
-        cat(paste0(pd.samp$cell,":",pd.samp$calltype,"\n"))
-        # read in the data
-        dat=tabix_mfreq(pd.samp$filepath,dbpath=reg)
-        # overlaps
-        cat("getting methylation by region\n")
-        db=load_db(reg,extracols)
-        dat.ovl=getRegionMeth(dat,db)
-        rm(dat);gc()
-        #get labels
-        cat("attaching labels\n")
-        dat.ovl$feature.type=db$regtype[dat.ovl$feature.index]
-        dat.ovl$samp=pd.samp$cell
-        dat.ovl$calltype=pd.samp$calltype
-        dat.ovl
-    })
-    dat.cat=do.call(rbind,dat.list)
+# first do just LINEs
+regname="LINE"
+reg = reg.info[which(reg.info$regtype=="LINE"),]
+db.reg = db[[which(reg.info$regtype=="LINE")]]
+
+# getting regional methylation
+coms = lapply(pd$filepath,function(x){
+    paste0("head -n1000 ",reg$filepath," | python ",parser," by-region -t 12 -i ",x)#," -r ",reg$filepath)
+})
+coms = lapply(pd$filepath,function(x){
+    paste0("python ",parser," by-region -t ",cores," -i ",x," -r ",reg$filepath)
+})
+
+cnames = c("chrom","start","end","id","score","strand","type","freq","cov","numsites")
+dat.raw = lapply(coms,function(x){
+    print(x)
+    y = system(x,intern=T)
+    out = as.tibble(do.call(rbind,strsplit(y,"\t")))
+    names(out) = cnames
+    out
+})
+
+dat.named = lapply(seq_along(dat.raw),function(i){
+    dat.raw[[i]]%>%
+        mutate(cell=pd$cell[i],
+               calltype=pd$calltype[i])})
+dat.all = do.call(rbind,dat.named)%>%
+    mutate(numsites=as.numeric(numsites),
+           freq=as.numeric(freq),
+           cov=as.numeric(cov))
+
+# reading seq from these regions
+coords = dat.all %>% select(chrom,start,end)%>%
+    mutate(coord=paste0(chrom,":",start,"-",end),
+           faidx=paste0(">",coord))%>%
+    unique()
+if (T) {
+    tabixreg.path = file.path(plotdir,paste0("hg38_repeats_",regname,".faidxregs.txt"))
+    write_tsv(coords[,"coord"],path=tabixreg.path,col_names=F)
 }
+com=paste("samtools faidx",ref,"-c -r",tabixreg.path)
+seqs.raw = system(com,intern=T)
+name.idx = grep(">",seqs)
+starts = name.idx+1
+ends = c(name.idx[-1]-1,length(seqs.raw))
+seqs.list = mclapply(mc.cores=cores,seq_along(name.idx),function(i){
+    seqlines = seqs.raw[starts[i]:ends[i]]
+    toupper(paste0(seqlines,collapse=""))
+})
+seqs = do.call(c,seqs.list)
+# get number of cpg and gpc sites in reference    
+seqs.tb = coords[match(seqs.raw[name.idx],coords$faidx),]%>%
+    mutate(seq = seqs,
+           cpg = str_count(seqs,"CG"),
+           gpc = str_count(seqs,"GC"))
 
-dat.all=MethByRegion(pd,reg.info$filepath[which(reg.info$regtype=="LINE")])
+# get fractions from data
+dat.all$seqidx = match(
+    paste0(dat.all$chrom,":",dat.all$start,"-",dat.all$end),
+    seqs.tb$coord)
+dat.all = dat.all %>% mutate(allsites = ifelse(calltype=="cpg",
+                                     seqs.tb$cpg[seqidx],
+                                     seqs.tb$gpc[seqidx]),
+                             sitefrac = numsites/allsites)
+dat.all%>%group_by(cell)%>%
+    filter(allsites>numsites)%>%
+    summarize(mean(sitefrac))
 
 dat.spread = dat.all %>%
-    select(-totcov,-numsites)%>%
-    spread(key=samp,value=freq)%>% na.omit()
+    select(-freq,-cov,-sitefrac)%>%
+    spread(key=cell,value=numsites)%>% na.omit()
+
+dat.del = dat.spread[,unique(pd$cell)]
+names(dat.del) = c("one","two")
+dat.del %>%
+    mutate(del = one-two)%>%
+    summarize(mean(del))
 
 dat.cpg=dat.all[which(dat.all$calltype=="cpg"),]
 dat.gpc=dat.all[which(dat.all$calltype=="gpc"),]
