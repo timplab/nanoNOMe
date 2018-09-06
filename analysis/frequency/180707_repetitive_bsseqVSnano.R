@@ -42,6 +42,7 @@ db=lapply(reg.info$filepath,function(x){
 regname="LINE"
 reg = reg.info[which(reg.info$regtype=="LINE"),]
 db.reg = db[[which(reg.info$regtype=="LINE")]]
+reg.large = db.reg[which(width(db.reg)>5000)]
 
 # getting regional methylation
 coms = lapply(pd$filepath,function(x){
@@ -62,7 +63,9 @@ dat.raw = lapply(coms,function(x){
 
 dat.named = lapply(seq_along(dat.raw),function(i){
     dat.raw[[i]]%>%
-        mutate(cell=pd$cell[i],
+        mutate(start = as.numeric(start),
+               end = as.numeric(end),
+               cell=pd$cell[i],
                calltype=pd$calltype[i])})
 dat.all = do.call(rbind,dat.named)%>%
     mutate(numsites=as.numeric(numsites),
@@ -102,11 +105,35 @@ dat.all = dat.all %>% mutate(allsites = ifelse(calltype=="cpg",
                                      seqs.tb$cpg[seqidx],
                                      seqs.tb$gpc[seqidx]),
                              sitefrac = numsites/allsites)
-dat.all%>%group_by(cell)%>%
-    filter(allsites>numsites)%>%
-    summarize(mean(sitefrac))
+# larger rep regions only?
+# largest regions covered by nanoNOMe
+dat.large = dat.all%>%
+    mutate(width = end-start)%>%
+    filter(width>=20000 & cell=="GM12878" & calltype=="cpg") %>%
+    arrange(desc(width))
+large.bed = dat.large[,c("chrom","start","end","id","score","strand")]%>%
+    mutate(start=as.character(start),
+           end=as.character(end))
+outbed = paste0(regdir,"/hg38_repeats_LINE_long.bed")
+if (T) {
+    write_tsv(large.bed,outbed,col_names=F)
+}
 
-dat.spread = dat.all %>%
+
+# which ones only appear in nanonome?
+nano.coords = dat.raw[[1]]%>%select(chrom,start,end)
+bsseq.coords = dat.raw[[2]] %>% select(chrom,start,end)
+int = dplyr::intersect(nano.coords,bsseq.coords)
+diff = dplyr::setdiff(nano.coords,bsseq.coords)
+diff2 = dplyr::setdiff(bsseq.coords,nano.coords)
+diff %>% mutate(width = end-start)
+
+dat.large%>%group_by(cell)%>%
+    filter(allsites!=0)%>%
+    summarize(mean(sitefrac),
+              quantile(sitefrac,0.1))
+
+dat.spread = dat.large %>%
     select(-freq,-cov,-sitefrac)%>%
     spread(key=cell,value=numsites)%>% na.omit()
 

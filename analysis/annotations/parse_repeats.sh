@@ -26,3 +26,5 @@ subbed=${prefix}_RTP.bed
   cat ${prefix}_LTR.bed ${prefix}_Retroposon.bed |\
   sort -k1,1 -k2,2n > $subbed
 
+# LINE : subset larger regions
+#awk 'OFS="\t"{ if($3-$2>=5000) print }' ${prefix}_LINE.bed > ${prefix}_LINE_long.bed

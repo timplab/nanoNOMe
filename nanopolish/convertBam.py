@@ -31,10 +31,10 @@ def parseArgs() :
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-w','--window',type=str,required=False, 
             help="window from index file to extract [chrom:start-end]")
-    parser.add_argument('-r','--regions',type=os.path.abspath,required=False, 
-            help="windows in bed format")
-    parser.add_argument('-o','--out',type=os.path.abspath,required=True, 
-            help="output bam file")
+    parser.add_argument('-r','--regions',type=argparse.FileType('r'),required=False, 
+            default = sys.stdin, help="windows in bed format (default: stdin)")
+    parser.add_argument('-o','--out',type=str,required=False,default="stdout",
+            help="output bam file (default: stdout)")
     # parse args
     args = parser.parse_args()
     args.srcdir=srcdir
@@ -92,22 +92,36 @@ def change_sequence(bam,methread,mod="cpg") :
 def listener(q,inbam,outbam,verbose=False) :
     '''listens for messages on the q, writes to file. '''
     if verbose : print("writing output to {}".format(outbam),file=sys.stderr)
-    with pysam.AlignmentFile(inbam,'rb') as fh :
-        f = pysam.AlignmentFile(outbam, 'wb',template = fh) 
+    if outbam == "stdout" :
+        # write output to stdout
+        f = sys.stdout
+        with pysam.AlignmentFile(inbam,'rb') as fh :
+            print(fh.header,file=f)
+        def printread(m,out_fh) :
+            print(m,file=out_fh)
+    else : 
+        with pysam.AlignmentFile(inbam,'rb') as fh :
+            f = pysam.AlignmentFile(outbam, 'wb',template = fh) 
+        def printread(m,out_fh) :
+            read = pysam.AlignedSegment.fromstring(m,out_fh.header)
+            out_fh.write(read)
     qname_list= list()
-    while 1:
+    while True:
         m = q.get()
         if m == 'kill':
             break
-        read = pysam.AlignedSegment.fromstring(m,f.header)
-        if read.query_name not in qname_list : 
-            if verbose: print(read.query_name,file=sys.stderr)
-            qname_list.append(read.query_name)
-            f.write(read)
+        fields = m.split("\t")
+        qname = ':'.join([fields[0],fields[2],fields[3]])
+        if qname not in qname_list : 
+            if verbose: print(qname,file=sys.stderr)
+            qname_list.append(qname)
+            printread(m,f)
         else : 
-            if verbose: print("{} already written".format(read.query_name),file=sys.stderr)
+            if verbose: print("{} already written".format(qname),file=sys.stderr)
+        q.task_done()
     if verbose : print("total {} reads processed".format(len(qname_list)),file=sys.stderr)
     f.close()
+    q.task_done()
 
 def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("reading {} from bam file".format(window),file=sys.stderr)
@@ -139,8 +153,7 @@ def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
 
 def main() :
     args=parseArgs()
-    with open(args.regions,"r") as fh :
-        windows = [ make_key(x) for x in fh ]
+    windows = [ make_key(x) for x in args.regions ]
     # initialize mp
     manager = mp.Manager()
     q = manager.Queue()
@@ -154,6 +167,7 @@ def main() :
     output = [ p.get() for p in jobs ]
     # done
     q.put('kill')
+    q.join()
     pool.close()
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
 
