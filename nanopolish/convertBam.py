@@ -28,7 +28,7 @@ def parseArgs() :
     parser.add_argument('-c','--cpg',type=os.path.abspath,required=True,
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-g','--gpc',type=os.path.abspath,required=False,
-            help="gpc methylation bed - sorted, bgzipped, and indexed")
+            default=None,help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-w','--window',type=str,required=False, 
             help="window from index file to extract [chrom:start-end]")
     parser.add_argument('-r','--regions',type=argparse.FileType('r'),required=False, 
@@ -50,6 +50,56 @@ def read_tabix(fpath,window) :
     reads = [MethRead(x) for x in entries]
     rdict = dict((x.qname,x) for x in reads)
     return rdict
+
+# https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
+def listener(q,inbam,outbam,verbose=False) :
+    '''listens for messages on the q, writes to file. '''
+    if verbose : print("writing output to {}".format(outbam),file=sys.stderr)
+    if outbam == "stdout" :
+        # write output to stdout
+        f = sys.stdout
+        with pysam.AlignmentFile(inbam,'rb') as fh :
+            print(fh.header,file=f)
+        def printread(m,out_fh) :
+            print(m,file=out_fh)
+    else : 
+        with pysam.AlignmentFile(inbam,'rb') as fh :
+            f = pysam.AlignmentFile(outbam, 'wb',template = fh) 
+        def printread(m,out_fh) :
+            read = pysam.AlignedSegment.fromstring(m,out_fh.header)
+            out_fh.write(read)
+    qname_list= list()
+    while True:
+        m = q.get()
+        if m == 'kill':
+            break
+        fields = m.split("\t")
+        qname = ':'.join([fields[0],fields[2],fields[3]])
+        if qname not in qname_list : 
+            if verbose: print(qname,file=sys.stderr)
+            qname_list.append(qname)
+            printread(m,f)
+        else : 
+            if verbose: print("{} already written".format(qname),file=sys.stderr)
+        q.task_done()
+    if verbose : print("total {} reads processed".format(len(qname_list)),file=sys.stderr)
+    f.close()
+    q.task_done()
+
+def convert_cpg(bam,cpg,gpc) :
+    # only cpg
+    return change_sequence(bam,cpg,"cpg")
+
+def convert_nome(bam,cpg,gpc) :
+    # cpg and gpc
+    bam_cpg = change_sequence(bam,cpg,"cpg")
+    return change_sequence(bam_cpg,gpc,"gpc")
+
+def reset_bam(bam) :
+    refseq = bam.get_reference_sequence()
+    bam.query_sequence = refseq
+    bam.cigarstring = ''.join([str(len(refseq)),"M"])
+    return bam
 
 def change_sequence(bam,methread,mod="cpg") :
     start = bam.reference_start
@@ -88,42 +138,7 @@ def change_sequence(bam,methread,mod="cpg") :
     bam.query_sequence = ''.join(seq)
     return bam
 
-# https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
-def listener(q,inbam,outbam,verbose=False) :
-    '''listens for messages on the q, writes to file. '''
-    if verbose : print("writing output to {}".format(outbam),file=sys.stderr)
-    if outbam == "stdout" :
-        # write output to stdout
-        f = sys.stdout
-        with pysam.AlignmentFile(inbam,'rb') as fh :
-            print(fh.header,file=f)
-        def printread(m,out_fh) :
-            print(m,file=out_fh)
-    else : 
-        with pysam.AlignmentFile(inbam,'rb') as fh :
-            f = pysam.AlignmentFile(outbam, 'wb',template = fh) 
-        def printread(m,out_fh) :
-            read = pysam.AlignedSegment.fromstring(m,out_fh.header)
-            out_fh.write(read)
-    qname_list= list()
-    while True:
-        m = q.get()
-        if m == 'kill':
-            break
-        fields = m.split("\t")
-        qname = ':'.join([fields[0],fields[2],fields[3]])
-        if qname not in qname_list : 
-            if verbose: print(qname,file=sys.stderr)
-            qname_list.append(qname)
-            printread(m,f)
-        else : 
-            if verbose: print("{} already written".format(qname),file=sys.stderr)
-        q.task_done()
-    if verbose : print("total {} reads processed".format(len(qname_list)),file=sys.stderr)
-    f.close()
-    q.task_done()
-
-def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
+def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("reading {} from bam file".format(window),file=sys.stderr)
     with pysam.AlignmentFile(bampath,"rb") as bam :
         bam_entries = [x for x in bam.fetch(region=window)]
@@ -141,12 +156,8 @@ def convertBam(bampath,cpgpath,gpcpath,window,verbose,q) :
         except KeyError : 
             continue
         i += 1
-        # reset the sequence
-        refseq = bam_dict[qname].get_reference_sequence()
-        bam_dict[qname].query_sequence = refseq
-        bam_dict[qname].cigarstring = ''.join([str(len(refseq)),"M"])
-        bam_cpg = change_sequence(bam_dict[qname],cpg,"cpg")
-        newbam = change_sequence(bam_cpg,gpc,"gpc")
+        bam = reset_bam(bam_dict[qname])
+        newbam = cfunc(bam,cpg,gpc)
         q.put(newbam.to_string())
     if verbose : print("converted {} bam entries in {}".format(i,window),file=sys.stderr)
     
@@ -161,8 +172,11 @@ def main() :
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     # watcher for output
     watcher = pool.apply_async(listener,(q,args.bam,args.out,args.verbose))
+    # which convert function
+    if args.gpc is None : converter = convert_cpg
+    else : converter = convert_nome
     jobs = [ pool.apply_async(convertBam,
-        args = (args.bam,args.cpg,args.gpc,win,args.verbose,q))
+        args = (args.bam,converter,args.cpg,args.gpc,win,args.verbose,q))
         for win in windows ]
     output = [ p.get() for p in jobs ]
     # done

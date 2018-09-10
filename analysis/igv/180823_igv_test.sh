@@ -1,10 +1,10 @@
 #!/bin/bash
 cells="GM12878"
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-bed=$root/database/hg38/hg38_repeats_LINE_long.bed
-reg=LINE_long
+bed=$root/database/hg38/hg38_repeats_LINE_long_chr7.bed
+reg=chr7_test_new
 pooldir=$root/pooled
-script=../../nanopolish/convertBam.py
+script=../../nanopolish/convertBam_test.py
 for cell in $cells;do
   bam=$pooldir/bam/$cell.pooled.bam
   mbeddir=$pooldir/methylation/methbyread_all
@@ -23,6 +23,7 @@ for cell in $cells;do
     com="samtools view -@ 10 -hb -L $bed $bam |\
       samtools sort -@ 10 -o $out"
   fi
+  echo $com
   eval $com
   samtools index $out
 done
