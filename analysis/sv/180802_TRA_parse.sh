@@ -21,5 +21,5 @@ for cell in $cells;do
 #    awk '{if ($1 != "@PG" || n < 1) print; if ($1 == "@PG") n +=1 }' |\
 #    samtools sort -o $outbam
 #  samtools index $outbam
-  tail $sv -n 10 | python $parser -v -t 8 -b $bam -c $cpg -g $gpc 
+  python $parser -v -t 8 -s $sv -b $bam -c $cpg -g $gpc 
 done

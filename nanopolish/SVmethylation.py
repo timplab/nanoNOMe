@@ -40,6 +40,7 @@ def parseArgs() :
     return args
 
 def make_coord(chrom,start,end) :
+    if start < 1 : start = 1
     return chrom+":"+str(start)+"-"+str(end)
 
 def read_tabix(fpath,window) :
@@ -96,16 +97,18 @@ def getRegMeth(read_list,start,end) :
     callreg = callarray[regidx,1].flatten()
     sigidx = np.argwhere(callreg != -1)
     sigreg = callreg[sigidx]
-    if len(sigreg) == 0 : meanmeth = 0
-    else : meanmeth = np.mean(sigreg)
-    return len(sigreg),meanmeth
+    methcount = np.count_nonzero(sigreg)
+    return len(sigreg),methcount
     
-def parse_methylation(q,key,cpg,gpc,chrom,start,end,tag) :
+def parse_methylation(q,sv,cpg,gpc,start,end,tag) :
+    qname = cpg[0].qname
     cpgcov,cpgmeth = getRegMeth(cpg,start,end)
     gpccov,gpcmeth = getRegMeth(gpc,start,end)
     if (gpccov == 0 or cpgcov == 0) : return
-    line = '\t'.join([str(x) for x in key.split(".")+[tag,cpgmeth,gpcmeth,cpgcov,gpccov]])
-    q.put((key,line))
+    line = '\t'.join([str(x) for x in [ sv.chrom,sv.pos,sv.pos,
+        sv.info["CHR2"],sv.info["END"],sv.info["END"],
+        qname,sv.id,".",".",tag,cpgmeth,gpcmeth,cpgcov,gpccov]])
+    q.put((qname+sv.id+tag,line))
 
 def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
     win = 300
@@ -115,12 +118,12 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
     if sv.allele == "0/0" : return
     win1 = make_coord(sv.chrom,sv.pos-win,sv.pos+win)
     win2 = make_coord(sv.info["CHR2"],sv.info["END"]-win,sv.info["END"]+win)
+    #q.put((win1+win2,win1+win2))
     bam_dicts = [ read_bam(bamfn,w) for w in [win1,win2] ]
     cpg_dicts = [ read_tabix(cpgfn,w) for w in [win1,win2] ]
     gpc_dicts = [ read_tabix(gpcfn,w) for w in [win1,win2] ]
     qnames = list(bam_dicts[0].keys()) + list(bam_dicts[1].keys())
     for qname in set(qnames) :
-        key = '.'.join([qname,sv.id])
         if ( qname in bam_dicts[0] and qname in bam_dicts[1] ):
             # this read is an SV and has both parts
             try :
@@ -128,9 +131,9 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
                 gpc1 = gpc_dicts[0][qname]
                 cpg = cpg_dicts[1][qname]
                 gpc = gpc_dicts[1][qname]
-                parse_methylation(q,"target"+key,cpg1,gpc1,sv.chrom,sv.pos-methwin,sv.pos+methwin,"target")
-                chrom,start,end,tag = (sv.info["CHR2"],sv.info["END"]-methwin,sv.info["END"]+methwin,"insert")
-                parse_methylation(q,"insert"+key,cpg,gpc,chrom,start,end,tag)
+                parse_methylation(q,sv,cpg1,gpc1,sv.pos-methwin,sv.pos+methwin,"target")
+                start,end,tag = (sv.info["END"]-methwin,sv.info["END"]+methwin,"insert")
+                parse_methylation(q,sv,cpg,gpc,start,end,tag)
                 continue
             except :
                 pass
@@ -141,7 +144,7 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
             except :
                 continue
             coords = [ pos for x in bam_dicts[1][qname] for pos in [x.reference_start,x.reference_end] ]
-            chrom,start,end = (sv.info["CHR2"],sv.info["END"]-methwin,sv.info["END"]+methwin)
+            start,end = (sv.info["END"]-methwin,sv.info["END"]+methwin)
             bp = [ x for x in coords if x >= sv.info["END"]-win and x <= sv.info["END"]+win ]
             if len(bp) > 0 : 
                 # this read is the insert of SV
@@ -156,7 +159,7 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
             except :
                 continue
             coords = [ pos for x in bam_dicts[0][qname] for pos in [x.reference_start,x.reference_end] ]
-            chrom,start,end = (sv.chrom,sv.pos-methwin,sv.pos+methwin)
+            start,end = (sv.pos-methwin,sv.pos+methwin)
             bp = [ x for x in coords if x >= sv.pos-win and x <= sv.pos+win ]
             if len(bp) > 0 : 
                 # this read is the target portion of SV
@@ -164,7 +167,7 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
             else :
                 # this read is inserted region without SV
                 tag = "target_noSV"
-        parse_methylation(q,key,cpg,gpc,chrom,start,end,tag)
+        parse_methylation(q,sv,cpg,gpc,start,end,tag)
 
    
 
