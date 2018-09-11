@@ -28,7 +28,6 @@ class bedSummary :
     def __init__(self,cutoff_length=200) :
         self.thr=cutoff_length
         self.read_lengths = []
-        self.mean_qscores = []
         self.read_num=0
     def update(self,fields) :
         rlen = int(fields[2])-int(fields[1])
@@ -36,7 +35,6 @@ class bedSummary :
             return
         self.read_num+=1
         self.read_lengths.append(rlen)
-        self.mean_qscores.append(float(fields[9]))
     def getnumbers(self) :
         mean_length=int(np.mean(self.read_lengths))
         total=sum(self.read_lengths)
@@ -59,4 +57,4 @@ def bedQC(in_fh,cutoff_length=200) :
 
 if __name__=="__main__":
     args=parseArgs()
-    ontQC(args.input,args.length)
+    bedQC(args.input,args.length)
