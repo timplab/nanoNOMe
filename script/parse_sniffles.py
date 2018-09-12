@@ -3,7 +3,9 @@ import sys
 import os
 import argparse
 import pysam
+import numpy as np
 from collections import namedtuple
+from methylbed_utils import SnifflesEntry,make_coord,read_bam
 import multiprocessing as mp
 import time
 start_time = time.time()
@@ -17,16 +19,21 @@ def parseArgs():
             help="verbose output")
     parent_parser.add_argument('-t','--threads',type=int,default=1,
             help="threads (default 1)")
-    parent_parser.add_argument('-i', '--input', nargs='?', type=argparse.FileType('r'),
+    parent_parser.add_argument('-s', '--sniffles', nargs='?', type=argparse.FileType('r'),
             required=False, default=sys.stdin,help="input vcf file path (or stdin)")
     parent_parser.add_argument('-o', '--output', nargs='?', type=str,
             required=False, default="stdout",help="output file path (or stdout)")
     # parser to print predicted bed coordinate ranges of SVs
-    parser_bed = subparsers.add_parser('bed',parents=[parent_parser])
-    parser_bed.add_argument('what',help="element to extract")
-    parser_bed.set_defaults(func=snifflesBed)
+    parser_bed = subparsers.add_parser('bed',parents=[parent_parser],
+            help = "make predictions of bed coordinates of breakpoints")
+    parser_bed.add_argument('-b','--bam',type=os.path.abspath,required=True,
+            help = "bam file")
+    parser_bed.add_argument('-w','--window',type=int,required=False,
+            default=200,help="window for flanking regions")
+    parser_bed.set_defaults(what="bed",func=snifflesBed)
     # parser to subset bam entries 
-    parser_bam = subparsers.add_parser('bam',parents=[parent_parser])
+    parser_bam = subparsers.add_parser('bam',parents=[parent_parser],
+            help = "subset bam entries that fall in SV bps")
     parser_bam.add_argument('-b','--bam',type=os.path.abspath,required=True,
             help = "bam file to subset")
     parser_bam.set_defaults(what="bam",func=snifflesBam)
@@ -34,25 +41,30 @@ def parseArgs():
 #    print(args)
     return args
 
-def make_coord(chrom,start,end) :
-    return chrom+":"+str(start)+"-"+str(end)
-
 # https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
 def listener(q,out,inbam=None,what="bam",verbose=False) :
     '''listens for messages on the q, writes to file. '''
     if verbose : print("writing output to {}".format(out),file=sys.stderr)
-    in_fh = pysam.AlignmentFile(inbam,'rb')
-    if out == "stdout" :
-        out_fh = sys.stdout
-        print(in_fh.header,file=out_fh)
-        def printline(m,out_fh) :
-            print(m,file=out_fh) 
+    if what == "bam" :
+        in_fh = pysam.AlignmentFile(inbam,'rb')
+        if out == "stdout" :
+            out_fh = sys.stdout
+            print(in_fh.header,file=out_fh)
+            def printline(m,out_fh) :
+                print(m,file=out_fh) 
+        else :
+            out_fh = pysam.AlignmentFile(out,'wb',template=in_fh)
+            def printline(m,out_fh) :
+                read = pysam.AlignedSegment.fromstring(m,out_fh.header)
+                out_fh.write(read)
+        in_fh.close()
     else :
-        out_fh = pysam.AlignmentFile(out,'wb',template=in_fh)
+        if out == "stdout" :
+            out_fh = sys.stdout
+        else :
+            out_fh = open(out,'w')
         def printline(m,out_fh) :
-            read = pysam.AlignedSegment.fromstring(m,out_fh.header)
-            out_fh.write(read)
-    in_fh.close()
+            print(m,file=out_fh)
     key_list = list()
     while 1:
         m = q.get()
@@ -69,65 +81,61 @@ def listener(q,out,inbam=None,what="bam",verbose=False) :
     out_fh.close()
     q.task_done()
 
+def printBed(outlist,q) :
+    out_line = '\t'.join(outlist)
+    if int(outlist[1])<0 : outlist[1] = str(0)
+    q.put((out_line,out_line))
 
-class SnifflesEntry :
-    def __init__(self,line) :
-        self.line=line.strip()
-        self.fields=self.line.split("\t")
-        (self.chrom,self.pos,self.id,self.ref, 
-                self.type,self.qual,self.filter,self.infostring,
-                self.format,self.genotype) = self.fields
-        self.pos = int(self.pos)
-        self.parseinfo()
-        self.parsegenotype()
-    def parseinfo(self) :
-        self.infofields = [ x.split("=") for x in self.infostring.strip().split(";")]
-        self.info = dict()
-        self.info["CONFIDENCE"] = self.infofields[0][0]
-        for entry in self.infofields[1:] :
-            self.info[entry[0]] = entry[1]
-        self.info["END"] = int(self.info["END"])
-        self.rnamelist = self.info["RNAMES"].split(",")
-    def parsegenotype(self) :
-        self.allele = self.genotype.split(":")[0]
-        self.num_against = int(self.genotype.split(":")[1])
-        self.num_for = int(self.genotype.split(":")[2])
-        self.coverage = self.num_against+self.num_for
-    def test(self,what):
-        if what == "multiregion" :
-#            if ( self.type == "<TRA>" and
-#                    self.coverage > 10 and
-#                    self.coverage < 100 and
-#                    allele == "0/1" ) :
-            if ( self.type == "<TRA>" and
-                    self.coverage > 10 and
-                    self.coverage < 100 ) :
-                return True
-    def printBedpe(self,name,out) :
-        n=500
-        print("\t".join([str(x) for x in [self.chrom,self.pos-n,self.pos+n,
-            self.info["CHR2"],self.info["END"]-n,self.info["END"]+n,
-            name,".",".",self.info["RNAMES"]]]),file=out)
-    def printBed(self,name,out) :
-        n=500
-        if self.pos < n : self.pos = 500
-        if self.info["END"] < n : self.info["END"] = 500
-        print("\t".join([
-            str(x) for x in [
-                self.chrom,self.pos-n,self.pos+n,name,
-                ".",".",self.info["RNAMES"]]
-            ]),file=out)
+def snifflesBed(bamfn,win,sv,verbose,q) : 
+    sv.activate()
+    if sv.allele == "0/0" : return
+    bamwin = 500
+    if sv.type == "TRA" :
+        coord = make_coord(sv.info["CHR2"],sv.info["END"]-bamwin,sv.info["END"]+bamwin)
+        # fetch reads to determine the right edge
+        bam_dicts = read_bam(bamfn,coord)
+        edge_list = list()
+        for qname in sv.rnames :
+            try : 
+                bam = bam_dicts[qname][-1]
+            except : continue
+            edge_list.append(bam.reference_end)
+        if len(edge_list) == 0 : return
+#        edge = max(edge_list)
+        edge = int(np.median(edge_list))
+        if ( max(edge_list)-edge > win and 
+                edge-min(edge_list) > win or 
+                edge < sv.info["END"] ): return 
+        printBed([sv.chrom,
+            str(sv.pos-1),
+            str(sv.pos),
+            sv.id,".",".",sv.type,"target","breakpoint"],q)
+        printBed([sv.chrom,
+            str(sv.pos-1-win),
+            str(sv.pos),
+            sv.id,".",".",sv.type,"target","upstream"],q)
+        printBed([sv.chrom,
+            str(sv.pos-1),
+            str(sv.pos+win),
+            sv.id,".",".",sv.type,"target","downstream"],q)
+        printBed([sv.info["CHR2"],
+            str(sv.info["END"]-1),
+            str(edge),sv.id,".",".",sv.type,"insert","region"],q)
+        printBed([sv.info["CHR2"],
+            str(sv.info["END"]-1-win),
+            str(sv.info["END"]),sv.id,".",".",sv.type,"insert","upstream"],q)
+        printBed([sv.info["CHR2"],
+            str(edge-1),
+            str(edge+win),sv.id,".",".",sv.type,"insert","downstream"],q)
+        printBed([sv.info["CHR2"],
+            str(sv.info["END"]-1),
+            str(sv.info["END"]+win),sv.id,".",".",sv.type,"insert","five-prime"],q)
+        printBed([sv.info["CHR2"],
+            str(edge-1-win),
+            str(edge),sv.id,".",".",sv.type,"insert","three-prime"],q)
 
-        print("\t".join([
-            str(x) for x in [
-                self.info["CHR2"],self.info["END"]-n,self.info["END"]+n,
-                name,".",".",self.info["RNAMES"]]
-            ]),file=out)
-
-def snifflesBed(args) :
-    print("not yet implemented")
-
-def snifflesBam(bamfn,svline,verbose,q) :
+def snifflesBam(bamfn,window,sv,verbose,q) :
+    sv.activate()
     win = 500
     sv = SnifflesEntry(svline)
     if sv.allele == "0/0" : return
@@ -141,33 +149,25 @@ def snifflesBam(bamfn,svline,verbose,q) :
             key = '.'.join([bam.query_name,bam.reference_name,str(bam.reference_start)])
             q.put((key,bam.to_string()))
 
-
-
 if __name__=="__main__":
     args=parseArgs()
-    # removing commented lines
-    cmtflag = 1
-    while cmtflag == 1 :
-        line = args.input.readline()
-        if line[0] != "#" : cmtflag = 0
-    inlines = args.input.readlines()
+    if args.verbose : print("reading in SVs",file=sys.stderr)
+    svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[0]!="#"]
+    # currently working only with TRA
+    svlines = [x for x in svlines if x.type == "TRA" ]
     # initialze mp
+    if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     manager = mp.Manager()
     q = manager.Queue()
     pool = mp.Pool(processes=args.threads)
-    if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     # watcher for output
     watcher = pool.apply_async(listener,(q,args.output,args.bam,args.what,args.verbose))
-    time.sleep(0.05)
     jobs = [ pool.apply_async(args.func,
-        args = (args.bam,line,args.verbose,q))
-        for line in inlines ]
+        args = (args.bam,args.window,sv,args.verbose,q))
+        for sv in svlines ]
     output = [ p.get() for p in jobs ]
     # done
     q.put('kill')
     q.join()
     pool.close()
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
-
-
-

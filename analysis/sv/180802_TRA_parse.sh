@@ -3,23 +3,42 @@ root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
 bamdir=$root/pooled/bam
 mbeddir=$root/pooled/methylation/methbyread_all
 svdir=$root/pooled/sv
-parser=../../nanopolish/SVmethylation.py
-bammer=../../script/parse_sniffles.py
-cells="MCF10A MCF7 MDAMB231"
-cells="MCF10A"
+parser=../../script/parse_sniffles.py
+bammer=../../script/convertBam.py
+cells="GM12878 MCF10A MCF7 MDAMB231"
+#cells="MCF10A"
 
 for cell in $cells;do
   echo $cell
   bam=$bamdir/$cell.pooled.bam
+  sv=$svdir/$cell.sniffles.vcf
   cpg=$mbeddir/$cell.cpg.pooled.meth.bed.gz
   gpc=$mbeddir/$cell.gpc.pooled.meth.bed.gz
-  sv=$svdir/$cell.sniffles.vcf
-  out=$svdir/$cell.TRAmultiregion.bed
+  out=$svdir/$cell.bcan_exclusive_TRA
   outbam=$svdir/$cell.TRAmultiregion.bam
+  win=250
+  svbed=$svdir/$cell.svregion.$win.bed
+  svbed=$svdir/MDAMB231.svregion.250.bed
 
-#  tail $sv -n 10 | python $bammer bam -v -t 8 -b $bam |\
-#    awk '{if ($1 != "@PG" || n < 1) print; if ($1 == "@PG") n +=1 }' |\
-#    samtools sort -o $outbam
-#  samtools index $outbam
-  python $parser -v -t 8 -s $sv -b $bam -c $cpg -g $gpc 
+  if [ "$1" == "makebed" ];then
+    log=$svdir/$cell.svbed.$win.log
+    python -u $parser bed -v -t 8 -b $bam -s $sv -o $svbed -w $win 2> $log
+  fi
+  if [ "$1" == "bam" ];then
+    bamout=$svdir/$cell.MDAMB231SVregion250bp.bam
+    log=$bamout.log
+    python -u $bammer -v -t 10 -b $bam -c $cpg -g $gpc -r $svbed 2> $log |\
+      samtools sort -o $bamout
+    samtools index $bamout
+  fi
+    
+
 done
+
+if [ "$1" == "svcompare" ];then
+  python ./svoverlaps.py
+fi
+
+if [ "$1" == "meth" ];then
+  Rscript ./180910_SVmethylation_comparison.R
+fi

@@ -3,6 +3,7 @@ import os
 import csv
 from collections import namedtuple
 import re
+import pysam
 import numpy as np
 
 # for read from a methylation bed file
@@ -47,7 +48,7 @@ class MethRead :
 class SnifflesEntry :
     def __init__(self,line) :
         self.line=line.strip()
-        self.fields=self.line.split("\t")
+        self.fields=self.line.split("\t")[0:10]
         (self.chrom,self.pos,self.id,self.ref,
                 self.type,self.qual,self.filter,self.infostring,
                 self.format,self.genotype) = self.fields
@@ -69,4 +70,20 @@ class SnifflesEntry :
         self.num_against = int(self.genotype.split(":")[1])
         self.num_for = int(self.genotype.split(":")[2])
         self.coverage = self.num_against+self.num_for
+
+# functions 
+def make_coord(chrom,start,end) :
+    if start < 1 : start = 1
+    return chrom+":"+str(start)+"-"+str(end)
+
+def read_bam(fpath,window) :
+    with pysam.AlignmentFile(fpath,'rb') as bam :
+        bam_entries = [ x for x in bam.fetch(region=window) ]
+    bamdict = dict()
+    for bam in bam_entries :
+        try :
+            bamdict[bam.query_name].append(bam)
+        except :
+            bamdict[bam.query_name] = [bam]
+    return bamdict
 

@@ -43,7 +43,7 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             region.tb=as.tibble(region)
             if (!is.null(col_names)) colnames(region.tb)=col_names
         }
-        region.tb
+        region.tb %>% type_convert()
 }
 
 mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){

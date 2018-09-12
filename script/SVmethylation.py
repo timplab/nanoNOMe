@@ -5,7 +5,7 @@ import sys
 import argparse
 import gzip
 import numpy as np
-from methylbed_utils import MethRead,SnifflesEntry
+from methylbed_utils import MethRead,SnifflesEntry,make_coord,read_bam
 import pysam
 import re
 import multiprocessing as mp
@@ -30,6 +30,8 @@ def parseArgs() :
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-g','--gpc',type=os.path.abspath,required=True,
             help="gpc methylation bed - sorted, bgzipped, and indexed")
+    parser.add_argument('-w','--window',type=int,required=False,
+            default=300,help="window for methylation")
     parser.add_argument('--type',type=str,required=False,
             default="TRA",help="type of SV to parse (default: TRA)")
     parser.add_argument('-o','--output',type=str,required=False, 
@@ -38,10 +40,6 @@ def parseArgs() :
     args = parser.parse_args()
     args.srcdir=srcdir
     return args
-
-def make_coord(chrom,start,end) :
-    if start < 1 : start = 1
-    return chrom+":"+str(start)+"-"+str(end)
 
 def read_tabix(fpath,window) :
     with pysam.TabixFile(fpath) as tabix :
@@ -54,18 +52,6 @@ def read_tabix(fpath,window) :
         except :
             rdict[read.qname] = [read]
     return rdict
-
-def read_bam(fpath,window) :
-    with pysam.AlignmentFile(fpath,'rb') as bam :
-        bam_entries = [ x for x in bam.fetch(region=window) ]
-    bamdict = dict()
-    for bam in bam_entries :
-        try :
-            bamdict[bam.query_name].append(bam)
-        except :
-            bamdict[bam.query_name] = [bam]
-    return bamdict
-
 
 # https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
 def listener(q,out,verbose=False) :
@@ -110,15 +96,15 @@ def parse_methylation(q,sv,cpg,gpc,start,end,tag) :
         qname,sv.id,".",".",tag,cpgmeth,gpcmeth,cpgcov,gpccov]])
     q.put((qname+sv.id+tag,line))
 
-def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
-    win = 300
-    methwin = 250
+def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
     sv.activate()
     # if majority supports reference, no significant
     if sv.allele == "0/0" : return
+    # windows for fetching reads - 
+    win = 300
     win1 = make_coord(sv.chrom,sv.pos-win,sv.pos+win)
     win2 = make_coord(sv.info["CHR2"],sv.info["END"]-win,sv.info["END"]+win)
-    #q.put((win1+win2,win1+win2))
+    # fetch reads
     bam_dicts = [ read_bam(bamfn,w) for w in [win1,win2] ]
     cpg_dicts = [ read_tabix(cpgfn,w) for w in [win1,win2] ]
     gpc_dicts = [ read_tabix(gpcfn,w) for w in [win1,win2] ]
@@ -169,12 +155,10 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,verbose,q) :
                 tag = "target_noSV"
         parse_methylation(q,sv,cpg,gpc,start,end,tag)
 
-   
-
 def main() :
     args=parseArgs()
     if args.verbose : print("parsing sniffles file",file=sys.stderr)
-    svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[0]!="#"]
+    svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[1]!="#"]
     sv_type = [x for x in svlines if x.type == args.type]
     if args.verbose : print("{} SVs selected out of {}".format(len(sv_type),len(svlines)),file=sys.stderr)
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
@@ -187,7 +171,7 @@ def main() :
     if args.type == "TRA" :
 #        jobs = [ TRA_methylation(entry,args.cpg,args.gpc,args.verbose,q) for entry in sv_type ]
         jobs = [ pool.apply_async(TRA_methylation,
-            args = (entry,args.bam,args.cpg,args.gpc,args.verbose,q))
+            args = (entry,args.bam,args.cpg,args.gpc,args.window,args.verbose,q))
             for entry in sv_type ]
     output = [ p.get() for p in jobs ]
     q.put('kill')
