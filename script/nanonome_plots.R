@@ -18,7 +18,10 @@ parse_mfreq = function(argsin){
     args=parse_args(argparser,args=argsin)
     args
 }
+
 # plotting
+#plotpath  = args$plotpath
+#win = args$window    
 aggregateByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win){
     db.center = resize(shift(db.gr,shift=width(db.gr)/2),width=1,ignore.strand=T)
     dat.list=list(cpg.tb,gpc.tb)
@@ -38,6 +41,9 @@ aggregateByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win){
     g=ggplot(dat.plt,aes(x=dist,y=freq,color=lab,group=lab))+
         theme_bw()+geom_line()+
         lims(y=c(0,1))+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.text = element_text(color="black"))+
         labs(x="Binned distance", y="Average methylation")
 
     pdf(plotpath,width=6,height=4,useDingbats=F)
@@ -101,7 +107,7 @@ heatmapByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win){
     dev.off()
 }
 
-test="aggregateByDistance,-c,/dilithium/Data/Nanopore/projects/nomeseq/analysis/validation/scNOMe/methfreq/GM12878_sample.cpg.methfreq.txt.gz,-g,/dilithium/Data/Nanopore/projects/nomeseq/analysis/validation/scNOMe/methfreq/GM12878_sample.gpc.methfreq.txt.gz,-r,/home/isac/Dropbox/Data/nome-seq/db/gm12878/ctcf/GM12878_CTCF.2kb.bed,-o,/home/isac/Dropbox/Data/nome-seq/plots/aggregate/GM12878_sample.ctcf.aggregate.pdf"
+test="aggregateByDistance,-c,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.cpg.methfreq.txt.gz,-g,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.gpc.methfreq.txt.gz,-r,/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/ctcf/GM12878_CTCF.2kb.bed,-o,/dilithium/Data/Nanopore/projects/nomeseq/analysis/plots/aggregate/GM12878.ctcf.aggregate.pdf"
 argsin=strsplit(test,",")[[1]]
 if (! interactive()){
     modules=c("aggregateByDistance","heatmapByDistance")
