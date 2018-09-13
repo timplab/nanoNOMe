@@ -5,9 +5,9 @@ import argparse
 def parseArgs():
     parser = argparse.ArgumentParser( description='Generate methylation bedGraph file')
     parser.add_argument('-c', '--call-threshold', type=float, required=False, default=2.5,
-            help="absolute value of threshold for methylation call")
-    parser.add_argument('-i', '--input', type=str, required=False,help="input methylation tsv file")
-    parser.add_argument('-m', '--mod',type=str,required=False,default='cpg',help="modification motif")
+            help="absolute value of threshold for methylation call (default : 2.5)")
+    parser.add_argument('-i', '--input', type=str, required=False,help="input methylation tsv file (default stdin)")
+    parser.add_argument('-m', '--mod',type=str,required=False,default='cpg',help="modification motif; one of cpg,gpc")
     parser.add_argument('-e', '--exclude',type=str,required=False,help="motif to exclude from reporting")
     parser.add_argument('-w', '--window',type=int,required=False,default=1,
             help="number of nucleotides to report on either side of called nucleotide")
@@ -110,9 +110,9 @@ def summarizeMeth(args):
         in_fh = sys.stdin
     for line in in_fh:
         try : 
+            # skip headers (in concatenated tsvs) and otherwise faulty entries
             query=MethQuery(line,args.mod,args.offset)
-        # skip headers (in concatenated tsvs)
-        except ValueError :
+        except :
             continue
         # skip queries that have a motif in the call group
         if args.exclude:
