@@ -44,7 +44,7 @@ aggregateByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win){
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank(),
               axis.text = element_text(color="black"))+
-        labs(x="Binned distance", y="Average methylation")
+        labs(color="Methylation motif", x="Distance to center", y="Average methylation")
 
     pdf(plotpath,width=6,height=4,useDingbats=F)
     print(g)

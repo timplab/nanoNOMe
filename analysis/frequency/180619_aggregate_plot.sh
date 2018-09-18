@@ -1,6 +1,7 @@
 #!/bin/bash
 cells="GM12878 GM12878_scNOMe GM12878_scNOMe_negcontrol GM12878_BSseq_1 GM12878_wgs"
-cells="GM12878 GM12878_scNOMe GM12878_scNOMe_negcontrol GM12878_BSseq_1"
+#cells="GM12878 GM12878_scNOMe GM12878_scNOMe_negcontrol GM12878_BSseq_1"
+#cells="GM12878_wgs"
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
 freqdir=$root/pooled/methylation/mfreq_all
 plotdir=$root/plots/aggregate
