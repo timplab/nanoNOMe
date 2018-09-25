@@ -127,9 +127,12 @@ def summarizeMeth(args):
                 read=readQuery(query,args)
             else : 
                 read.update(query)
-        except NameError :
+        except :
             read=readQuery(query,args)
-    PrintRead(read)
+    try : 
+        PrintRead(read)
+    except :
+        pass
     in_fh.close()
 
 if __name__=="__main__":
