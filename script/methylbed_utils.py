@@ -72,9 +72,19 @@ class SnifflesEntry :
         self.coverage = self.num_against+self.num_for
 
 # functions 
+def tabix(fpath,window) :
+    with pysam.TabixFile(fpath,'r') as tabix :
+        entries = [ x for x in tabix.fetch(window)]
+    return entries
+    
 def make_coord(chrom,start,end) :
     if start < 1 : start = 1
     return chrom+":"+str(start)+"-"+str(end)
+
+def bed_to_coord(bedentry) :
+    fields=bedentry.strip().split("\t")
+    start = str(int(fields[1])+1)
+    return fields[0]+":"+start+"-"+fields[2]
 
 def read_bam(fpath,window) :
     with pysam.AlignmentFile(fpath,'rb') as bam :

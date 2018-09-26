@@ -2,6 +2,13 @@
 # methylation utils
 
 # data reading
+read_data <- function(infp){
+    if (infp == "stdin"){
+        infp <- file(infp)
+    }
+    read_tsv(infp,col_names=F)
+}
+
 load_db <- function(fpath,extracols=c("regstart","regend")){
     bedcnames=c("chrom","start","end","id","score","strand")
     cnames=c(bedcnames,extracols)

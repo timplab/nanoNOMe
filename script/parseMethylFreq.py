@@ -10,6 +10,7 @@ import pysam
 import re
 import multiprocessing as mp
 import time
+from multiprocess_utils import listener,init_mp,close_mp
 start_time = time.time()
 
 def parseArgs() :
@@ -55,28 +56,6 @@ def tabix_mfreq(fpath,window) :
         entries = [ methFreq._make(x.strip().split('\t')) for x in tabix.fetch(window)]
     return entries
 
-# https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
-def listener(q,out,verbose=False) :
-    '''listens for messages on the q, writes to file. '''
-    if verbose : print("writing output to {}".format(out),file=sys.stderr)
-    if out == "stdout" :
-        out_fh = sys.stdout
-    else : 
-        out_fh = open(out,'w')
-    reg_list= list()
-    while 1:
-        m = q.get()
-        if m == 'kill':
-            break
-        key,line = m
-        if key not in reg_list: 
-            reg_list.append(key)
-            print(line,file=out_fh)
-        else : 
-            if verbose: print("{} already written - skipping".format(key),file=sys.stderr)
-    if verbose : print("total {} lines written".format(len(reg_list)),file=sys.stderr)
-    out_fh.close()
-
 def getRegionMeth(infile,window,regline,coverage,exclude,verbose,q) :
     if verbose : print("reading {}".format(window),file=sys.stderr)
     try : 
@@ -121,9 +100,7 @@ def RegionMeth_main(args) :
         print("using {} parallel processes to get methylation per region".format(args.threads),
                 file=sys.stderr)
     # initialize mp
-    manager = mp.Manager()
-    q = manager.Queue()
-    pool = mp.Pool(processes=args.threads)
+    manager,q,pool = init_mp()
     # watcher for output
     watcher = pool.apply_async(listener,(q,args.output,args.verbose))
     jobs = list()
@@ -133,9 +110,7 @@ def RegionMeth_main(args) :
             (args.input,win,reg,args.coverage,args.exclude,args.verbose,q))
             for win,reg in windows.items() ] 
     output = [ p.get() for p in jobs ]
-    # done
-    q.put('kill')
-    pool.close()
+    close_mp(q,pool)
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
 
 if __name__=="__main__":

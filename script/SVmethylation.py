@@ -9,6 +9,7 @@ from methylbed_utils import MethRead,SnifflesEntry,make_coord,read_bam
 import pysam
 import re
 import multiprocessing as mp
+from multiprocess_utils import listener,init_mp,close_mp
 import time
 start_time = time.time()
 
@@ -52,30 +53,6 @@ def read_tabix(fpath,window) :
         except :
             rdict[read.qname] = [read]
     return rdict
-
-# https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
-def listener(q,out,verbose=False) :
-    '''listens for messages on the q, writes to file. '''
-    if verbose : print("writing output to {}".format(out),file=sys.stderr)
-    if out == "stdout" :
-        out_fh = sys.stdout
-    else :
-        out_fh = open(out,'w')
-    reg_list= list()
-    while 1:
-        m = q.get()
-        if m == 'kill':
-            break
-        key,line = m
-        if key not in reg_list:
-            reg_list.append(key)
-            print(line,file=out_fh)
-        else :
-            if verbose: print("{} already written - skipping".format(key),file=sys.stderr)
-        q.task_done()
-    if verbose : print("total {} lines written".format(len(reg_list)),file=sys.stderr)
-    out_fh.close()
-    q.task_done()
 
 def getRegMeth(read_list,start,end) :
     callarray = np.concatenate([ x.callarray for x in read_list])
@@ -162,10 +139,7 @@ def main() :
     sv_type = [x for x in svlines if x.type == args.type]
     if args.verbose : print("{} SVs selected out of {}".format(len(sv_type),len(svlines)),file=sys.stderr)
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
-    # initialize mp
-    manager = mp.Manager()
-    q = manager.Queue()
-    pool = mp.Pool(processes=args.threads)
+    manager,q,pool = init_mp()
     # watcher for output
     watcher = pool.apply_async(listener,(q,args.output,args.verbose))
     if args.type == "TRA" :
@@ -174,10 +148,7 @@ def main() :
             args = (entry,args.bam,args.cpg,args.gpc,args.window,args.verbose,q))
             for entry in sv_type ]
     output = [ p.get() for p in jobs ]
-    q.put('kill')
-    # done
-    q.join()
-    pool.close()
+    close_mp(q,pool)
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
 
 if __name__=="__main__":
