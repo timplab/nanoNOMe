@@ -23,16 +23,17 @@ class MethQuery:
         self.rname=self.fields[0]
         self.mod=mod
         if mod=="cpg" :
-            self.start=int(self.fields[1])+offset
+            self.start=int(self.fields[2])+offset
             self.motif="CG"
         elif mod=="gpc" :
-            self.start=int(self.fields[1])+offset # offset from methylation calls - 1-based
+            self.start=int(self.fields[2])+offset # offset from methylation calls - 1-based
             self.motif="GC"
-        self.qname=self.fields[3]
-        self.ratio=float(self.fields[4])
-        self.unmeth=float(self.fields[6])
-        self.recsites=int(self.fields[8])
-        self.seq=self.fields[9]
+        self.strand=self.fields[1]
+        self.qname=self.fields[4]
+        self.ratio=float(self.fields[5])
+        self.unmeth=float(self.fields[7])
+        self.recsites=int(self.fields[9])
+        self.seq=self.fields[10][3:]
     def methcall(self,thr):
         if abs(self.ratio) < thr :
             call="x"
@@ -59,6 +60,7 @@ class readQuery:
         self.rname=query.rname
         self.start=query.start
         self.end=query.start
+        self.strand=query.strand
         self.dist=[]
         self.seq=[]
         self.ratio=[]
