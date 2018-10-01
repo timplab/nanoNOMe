@@ -12,7 +12,7 @@ def parseArgs():
     parser.add_argument('-w', '--window',type=int,required=False,default=1,
             help="number of nucleotides to report on either side of called nucleotide")
     parser.add_argument('--offset',type=int,required=False,default=1,
-            help="index offset for bed coordinate")
+            help="nanopolish coordinate offset (1-based)")
     args = parser.parse_args()
     assert(args.call_threshold is not None)
     return args
