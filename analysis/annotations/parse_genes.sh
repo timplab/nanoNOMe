@@ -1,8 +1,7 @@
 #!/bin/bash
 # parse genes
-# path to the ensembl gtf.gz provided as an arugment
 echo "parsing genes"
-db="$1"
+db=$(readlink -f ../../annotations/hg38/hg38_genes.gtf.gz)
 prefix=${db%%.*}
 
 # convert to bed

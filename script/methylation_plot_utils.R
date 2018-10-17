@@ -23,33 +23,17 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             # input region is a GRanges object
             if (verbose) cat(paste0("reading regions defined by GRanges object",
                                     " in ",querypath,"\n"))
-            corenum=detectCores()-2
-            if (verbose) cat(paste0("using ",corenum," cores\n"))
-            raw.list = mclapply(mc.cores=corenum,dbpath,function(reg.gr){
-                if (verbose) cat(paste0(as.character(reg.gr),"\n"))
-                reg.char=paste0(as.character(seqnames(reg.gr)),":",
-                                as.character(start(reg.gr)),"-",
-                                as.character(end(reg.gr)))
-                command=paste("tabix",querypath,reg.char,sep=" ")
-                region.raw = system(command,intern=TRUE)
-                if (verbose) cat("converting to tibble\n")
-                region=do.call(rbind,strsplit(region.raw,"\t"))
-                region.tb=as.tibble(region)
-                if (!is.null(col_names)) colnames(region.tb)=col_names
-                region.tb
-            })
-            if (verbose) cat("joining\n")
-            region.tb = do.call(rbind,raw.list)
+            command = paste("tabix",querypath,toString(dbpath))
         } else {
             if (verbose) cat(paste0("reading regions defined by ",
                                     dbpath," in ",querypath,"\n"))
-            command=paste("tabix",querypath,"-R",dbpath,sep=" ")
-            region.raw=system(command,intern=TRUE)
-            if (verbose) cat("converting to tibble\n")
-            region=do.call(rbind,strsplit(region.raw,"\t"))
-            region.tb=as.tibble(region)
-            if (!is.null(col_names)) colnames(region.tb)=col_names
+            command=paste("tabix",querypath,"-R",dbpath)
         }
+        region.raw=system(command,intern=TRUE)
+        if (verbose) cat("converting to tibble\n")
+        region=do.call(rbind,strsplit(region.raw,"\t"))
+        region.tb=as.tibble(region)
+        if (!is.null(col_names)) colnames(region.tb)=col_names
         region.tb %>% type_convert()
 }
 
@@ -58,7 +42,7 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
     corenum=(detectCores()-2)/2
     if (verbose) cat(paste0("using ",corenum," cores\n"))
     out.list=mclapply(mc.cores=corenum,seq(dim(mbed)[1]),function(i){
-        if (verbose) cat(paste0(i,"\n"))
+        #if (verbose) cat(paste0(i,"\n"))
         read=mbed[i,]
         mstring=read$mstring    
         call=str_extract_all(mstring,"[a-z]")[[1]]
@@ -81,7 +65,7 @@ mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
             pp = preplot(smooth,where="data",band="local")
             out$smooth = pp$trans(pp$fit)
         }
-        if (verbose) cat(paste0("done with ",i,"\n"))
+        #if (verbose) cat(paste0("done with ",i,"\n"))
         out
     })
     calls = do.call(rbind,out.list)
@@ -92,8 +76,6 @@ tabix_mbed <- function(querypath,dbpath=NULL,by=c("read","call"),verbose=TRUE){
     mbedcnames=c("chrom","start","end","readname","mstring","scores","context")
     if (!is.null(dbpath)) {
         region.tb=tabix(querypath,dbpath,mbedcnames,verbose=verbose)
-        region.tb$start=as.numeric(region.tb$start)
-        region.tb$end=as.numeric(region.tb$end)
         if (verbose) cat("removing redundant loci\n")
         out.tb=unique(region.tb)
     }else{
@@ -102,7 +84,7 @@ tabix_mbed <- function(querypath,dbpath=NULL,by=c("read","call"),verbose=TRUE){
     }
     parsembed=function(mbed.tb,what,verbose=TRUE){
         if (what == "call"){
-            mbedByCall(out.tb,verbose=verbose)
+            mbedByCall(mbed.tb,verbose=verbose)
         } else if (what == "read"){
             mbed.tb
         }
@@ -180,6 +162,15 @@ getDistance <- function(query,subject){
 }
 calculate_rollmean <- function(dat.tb,rollrange,win){
     rollmeans=numeric()
+    if (! "dist" %in% names(dat.tb)) {
+        if ("start" %in% names(dat.tb)) {
+              dat.tb= dat.tb%>%
+                mutate(dist=start)
+        } else if ("pos" %in% names(dat.tb)){
+              dat.tb= dat.dst %>%
+                mutate(dist=pos)
+        }
+    }
     for ( center in rollrange ){
         dat.win=dat.tb[which(dat.tb$dist >= center-win &
                              dat.tb$dist <= center+win),]

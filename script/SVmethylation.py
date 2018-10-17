@@ -24,7 +24,7 @@ def parseArgs() :
     parser.add_argument('-v','--verbose', action='store_true',default=False,
             help="verbose output")
     parser.add_argument('-s','--sniffles',type=argparse.FileType('r'),required=False, 
-            default=sys.stdin,help="sniffles vcf output")
+            default=sys.stdin,help="sniffles vcf output (default stdin)")
     parser.add_argument('-b','--bam',type=os.path.abspath,required=True,
             help="bam file")
     parser.add_argument('-c','--cpg',type=os.path.abspath,required=True,
@@ -32,7 +32,7 @@ def parseArgs() :
     parser.add_argument('-g','--gpc',type=os.path.abspath,required=True,
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-w','--window',type=int,required=False,
-            default=300,help="window for methylation")
+            default=200,help="window for methylation")
     parser.add_argument('--type',type=str,required=False,
             default="TRA",help="type of SV to parse (default: TRA)")
     parser.add_argument('-o','--output',type=str,required=False, 
@@ -65,17 +65,18 @@ def getRegMeth(read_list,start,end) :
     
 def parse_methylation(q,sv,cpg,gpc,start,end,tag) :
     qname = cpg[0].qname
+    taglist = tag.split("_")
     cpgcov,cpgmeth = getRegMeth(cpg,start,end)
     gpccov,gpcmeth = getRegMeth(gpc,start,end)
     if (gpccov == 0 or cpgcov == 0) : return
     line = '\t'.join([str(x) for x in [ sv.chrom,sv.pos,sv.pos,
         sv.info["CHR2"],sv.info["END"],sv.info["END"],
-        qname,sv.id,".",".",tag,cpgmeth,gpcmeth,cpgcov,gpccov]])
+        qname,sv.id,".",".",taglist[1],taglist[0],cpgmeth,gpcmeth,cpgcov,gpccov]])
     q.put((qname+sv.id+tag,line))
 
 def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
     sv.activate()
-    # if majority supports reference, no significant
+    # if majority supports reference, drop
     if sv.allele == "0/0" : return
     # windows for fetching reads - 
     win = 300
@@ -87,35 +88,32 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
     gpc_dicts = [ read_tabix(gpcfn,w) for w in [win1,win2] ]
     qnames = list(bam_dicts[0].keys()) + list(bam_dicts[1].keys())
     for qname in set(qnames) :
-        if ( qname in bam_dicts[0] and qname in bam_dicts[1] ):
+        if (qname in sv.rnames or 
+                ( qname in bam_dicts[0] 
+                    and qname in bam_dicts[1] )):
             # this read is an SV and has both parts
-            try :
+            if qname in cpg_dicts[0].keys() and qname in gpc_dicts[0].keys() :
                 cpg1 = cpg_dicts[0][qname]
                 gpc1 = gpc_dicts[0][qname]
+                parse_methylation(q,sv,cpg1,gpc1,sv.pos-methwin,sv.pos+methwin,"target_SV")
+            if qname in cpg_dicts[1].keys() and qname in gpc_dicts[1].keys() :
                 cpg = cpg_dicts[1][qname]
                 gpc = gpc_dicts[1][qname]
-                parse_methylation(q,sv,cpg1,gpc1,sv.pos-methwin,sv.pos+methwin,"target")
-                start,end,tag = (sv.info["END"]-methwin,sv.info["END"]+methwin,"insert")
-                parse_methylation(q,sv,cpg,gpc,start,end,tag)
+                start,end,tag = (sv.info["END"]-methwin,sv.info["END"]+methwin,"insert_SV")
+            else :
                 continue
-            except :
-                pass
-        if ( qname in bam_dicts[1] ) :
-            try :
+        elif ( qname in bam_dicts[1] ) :
+            # insert not SV
+            if qname in cpg_dicts[1].keys() and qname in gpc_dicts[1].keys() :
                 cpg = cpg_dicts[1][qname]
                 gpc = gpc_dicts[1][qname]
-            except :
+            else : 
                 continue
             coords = [ pos for x in bam_dicts[1][qname] for pos in [x.reference_start,x.reference_end] ]
             start,end = (sv.info["END"]-methwin,sv.info["END"]+methwin)
-            bp = [ x for x in coords if x >= sv.info["END"]-win and x <= sv.info["END"]+win ]
-            if len(bp) > 0 : 
-                # this read is the insert of SV
-                tag = "insert"
-            else :
-                # this read is insert that has not been transposed
-                tag = "insert_noSV"
+            tag = "insert_noSV"
         elif ( qname in bam_dicts[0] ) :
+            # target not SV
             try :
                 cpg = cpg_dicts[0][qname]
                 gpc = gpc_dicts[0][qname]
@@ -124,12 +122,7 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
             coords = [ pos for x in bam_dicts[0][qname] for pos in [x.reference_start,x.reference_end] ]
             start,end = (sv.pos-methwin,sv.pos+methwin)
             bp = [ x for x in coords if x >= sv.pos-win and x <= sv.pos+win ]
-            if len(bp) > 0 : 
-                # this read is the target portion of SV
-                tag = "target"
-            else :
-                # this read is inserted region without SV
-                tag = "target_noSV"
+            tag = "target_noSV"
         parse_methylation(q,sv,cpg,gpc,start,end,tag)
 
 def main() :
@@ -139,14 +132,18 @@ def main() :
     sv_type = [x for x in svlines if x.type == args.type]
     if args.verbose : print("{} SVs selected out of {}".format(len(sv_type),len(svlines)),file=sys.stderr)
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
-    manager,q,pool = init_mp()
+    manager,q,pool = init_mp(args.threads)
     # watcher for output
     watcher = pool.apply_async(listener,(q,args.output,args.verbose))
-    if args.type == "TRA" :
-#        jobs = [ TRA_methylation(entry,args.cpg,args.gpc,args.verbose,q) for entry in sv_type ]
-        jobs = [ pool.apply_async(TRA_methylation,
-            args = (entry,args.bam,args.cpg,args.gpc,args.window,args.verbose,q))
-            for entry in sv_type ]
+    if args.threads == 1 :
+        if args.type == "TRA" :
+            jobs = [ TRA_methylation(entry,args.bam,args.cpg,args.gpc,args.window,args.verbose,q)
+                for entry in sv_type ]
+    else : 
+        if args.type == "TRA" :
+            jobs = [ pool.apply_async(TRA_methylation,
+                args = (entry,args.bam,args.cpg,args.gpc,args.window,args.verbose,q))
+                for entry in sv_type ]
     output = [ p.get() for p in jobs ]
     close_mp(q,pool)
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)

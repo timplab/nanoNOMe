@@ -6,7 +6,7 @@ import argparse
 import gzip
 import numpy as np
 from collections import namedtuple
-from methylbed_utils import MethRead
+from methylbed_utils import MethRead,bed_to_coord
 import pysam
 import re
 import multiprocessing as mp
@@ -39,10 +39,6 @@ def parseArgs() :
     args = parser.parse_args()
     args.srcdir=srcdir
     return args
-
-def make_key(bedentry) :
-    fields=bedentry.strip().split("\t")
-    return fields[0]+":"+fields[1]+"-"+fields[2]
 
 def read_tabix(fpath,window) :
     with pysam.TabixFile(fpath) as tabix :
@@ -164,7 +160,7 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
 
 def main() :
     args=parseArgs()
-    windows = [ make_key(x) for x in args.regions ]
+    windows = [ bed_to_coord(x) for x in args.regions ]
     # initialize mp
     manager = mp.Manager()
     q = manager.Queue()

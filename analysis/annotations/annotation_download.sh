@@ -15,7 +15,7 @@ db=$dbdir/hg38_repeats.txt.gz
 # genes
 db=$dbdir/hg38_genes.gtf.gz
 [ -e $db ]||\
-  wget ftp://ftp.ensembl.org/pub/release-92/gtf/homo_sapiens/Homo_sapiens.GRCh38.92.gtf.gz \
+  wget ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_29/gencode.v29.annotation.gtf.gz \
     -O $db
 # cgi
 db=$dbdir/hg38_cgi.txt.gz
