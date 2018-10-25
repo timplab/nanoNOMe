@@ -1,16 +1,11 @@
 #!/bin/bash
-root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-if [ ! -z $1 ];then
-  root=$1
-fi
-dir=$root/database/gm12878/mnase
-samp=GM12878
-bigwig=$dir/*bigWig
-converter=../../util/bigWigToBedGraph
+dir="$1"
+prefix="$dir/GM12878_MNase"
+bigwig=$prefix.bigWig
 
-bed=$dir/${samp}_mnase.bedGraph
+bed=$prefix.bedGraph
 if [ ! -e $bed.gz ];then
-  $converter $bigwig $bed
+  bigWigToBedGraph $bigwig $bed
   bgzip $bed ; tabix -p bed $bed.gz
 fi
 bedhg38=$dir/${samp}_mnase.hg38.bedGraph

@@ -23,12 +23,14 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             # input region is a GRanges object
             if (verbose) cat(paste0("reading regions defined by GRanges object",
                                     " in ",querypath,"\n"))
-            command = paste("tabix",querypath,toString(dbpath))
+            regions = gsub(":.,","",toString(dbpath))
+            command = paste("tabix",querypath,regions)
         } else {
             if (verbose) cat(paste0("reading regions defined by ",
                                     dbpath," in ",querypath,"\n"))
             command=paste("tabix",querypath,"-R",dbpath)
         }
+        cat(paste0(substr(command,1,500),"...\n"))
         region.raw=system(command,intern=TRUE)
         if (verbose) cat("converting to tibble\n")
         region=do.call(rbind,strsplit(region.raw,"\t"))
@@ -99,9 +101,6 @@ tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose
     mfreqcnames=c("chrom","start","strand","meth","unmeth","dinuc","trinuc")
     if (!is.null(dbpath)) {
         region.tb=tabix(querypath,dbpath,mfreqcnames,verbose=verbose)
-        region.tb$meth=as.numeric(region.tb$meth)
-        region.tb$unmeth=as.numeric(region.tb$unmeth)
-        region.tb$start=as.numeric(region.tb$start)
         if (verbose) cat("removing redundant loci\n")
         out.tb=unique(region.tb)
     }else{
@@ -127,9 +126,14 @@ getCenter <- function(db.gr){
     resize(shift(db.gr,shift=width(db.gr)/2),width=1,ignore.strand=T)
 }
 getRegionMeth <- function(query,subject,thr=2,verbose=TRUE){
-    if (verbose) cat("converting data to GRanges if not supplied as them\n")
-    if (class(query)[1] != "GRanges") query=GRanges(query)
-    if (class(subject)[1] != "GRanges") subject=GRanges(subject)
+    if (class(query)[1] != "GRanges") {
+        if (verbose) cat("converting data to GRanges\n")
+        query=GRanges(query)
+    }
+    if (class(subject)[1] != "GRanges"){
+        if (verbose) cat("converting subject to GRanges\n")
+        subject=GRanges(subject)
+    }
     if (verbose) cat("finding overlaps\n")
     ovl=findOverlaps(query,subject)
     freq.tb=tibble(freq=query$freq[queryHits(ovl)],
@@ -198,3 +202,21 @@ aggregate_methylation <- function(dat.dist,win=50){
     rollmeans=calculate_rollmean(dat.ag,rollrange=roll.range,win=win/2)
     tibble(dist=roll.range,freq=rollmeans)
 }
+
+bin_pairwise_methylation <- function(data,bin_number=75,saturation_quantile=0.9){
+    n = 75
+    breaks= seq(0,1,length.out=n)
+    names(data) = c("x","y",names(data)[3:dim(data)[2]])
+    data$x = cut(data$x,breaks)
+    data$y = cut(data$y,breaks)
+    levels(data$x)=levels(data$y)=breaks[1:length(breaks)-1]
+    hist = data %>% group_by_all() %>%
+        summarize(count=n()) %>% ungroup() %>%
+        mutate(x=as.numeric(as.character(x)),
+               y=as.numeric(as.character(y)))
+    cutoff=round(quantile(hist$count,0.9))
+    hist = hist%>%mutate(count=ifelse(count>cutoff,cutoff,count))
+    hist
+}
+
+

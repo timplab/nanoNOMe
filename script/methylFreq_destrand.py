@@ -11,7 +11,7 @@ def parseArgs() :
     srcpath=sys.argv[0]
     srcdir=os.path.dirname(os.path.abspath(srcpath))
     # parser
-    parser = argparse.ArgumentParser(description='parse methylation frequency file')
+    parser = argparse.ArgumentParser(description='remove strand from frequency file')
     parser.add_argument('-v','--verbose', action='store_true',default=False,
             help="verbose output")
     parser.add_argument('-i','--input',type=argparse.FileType('r'),
@@ -19,13 +19,13 @@ def parseArgs() :
     args = parser.parse_args()
     return args
 
-methylFreq = namedtuple('methylFreq',['chrom','pos','strand','methylated','unmethylated'])
+methylFreq = namedtuple('methylFreq',['chrom','pos','strand','methylated','unmethylated','di','tri'])
 if __name__=="__main__":
     args=parseArgs()
     for line in args.input :
         fields = line.strip().split("\t")
         new = methylFreq(fields[0],int(fields[1]),
-                fields[2],int(fields[3]),int(fields[4]))
+                fields[2],int(fields[3]),int(fields[4]),fields[5],fields[6])
         try : entry.chrom
         except ( NameError,AttributeError ):
             entry = new

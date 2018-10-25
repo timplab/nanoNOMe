@@ -7,10 +7,10 @@ prefix=${db%%.*}
 
 # convert to bed
 bed=$prefix.bed
-[ -e $bed ]||\
-  gunzip -c $db |\
-  awk 'OFS="\t"{ print $2,$3,$4,$5,$6,$7,$16 }' |\
-  sort -k1,1 -k2,2n > $bed
+gunzip -c $db |\
+  awk 'OFS="\t"{ if ($2 !~ /_/) print $2,$3,$4,$5,$6,$7,$16 }' |\
+sort -k1,1 -k2,2n > $bed
+exit
 
 # subset by repeat type
 repeat_types="LINE SINE DNA LTR Retroposon"
