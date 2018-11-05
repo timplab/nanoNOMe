@@ -26,14 +26,10 @@ def parseArgs():
     # parser to print predicted bed coordinate ranges of SVs
     parser_bed = subparsers.add_parser('bed',parents=[parent_parser],
             help = "make predictions of bed coordinates of breakpoints")
-    parser_bed.add_argument('-b','--bam',type=os.path.abspath,required=False,
-            default = None,help = "bam file")
+    parser_bed.add_argument('-b','--bam',type=os.path.abspath,required=True,
+            help = "bam file")
     parser_bed.add_argument('-w','--window',type=int,required=False,
             default=200,help="window for flanking regions")
-    parser_bed.add_argument('-r','--readsupport',type=int,required=False,
-            default=5,help="minimum read suppport")
-    parser_bed.add_argument('-l','--length',type=int,required=False,
-            default=500,help="minimum length")
     parser_bed.set_defaults(what="bed",func=snifflesBed)
     # parser to subset bam entries 
     parser_bam = subparsers.add_parser('bam',parents=[parent_parser],
@@ -90,11 +86,12 @@ def printBed(outlist,q) :
     if int(outlist[1])<0 : outlist[1] = str(0)
     q.put((out_line,out_line))
 
-def bedwithbam(bamfn,win,sv,verbose,q):
-    coord = make_coord(sv.info["CHR2"],sv.info["END"]-bamwin,sv.info["END"]+bamwin)
+def snifflesBed(bamfn,win,sv,verbose,q) : 
+    sv.activate()
+    if sv.allele == "0/0" : return
     bamwin = 500
-    # for now just doing 
     if sv.type == "TRA" :
+        coord = make_coord(sv.info["CHR2"],sv.info["END"]-bamwin,sv.info["END"]+bamwin)
         # fetch reads to determine the right edge
         bam_dicts = read_bam(bamfn,coord)
         edge_list = list()
@@ -137,21 +134,11 @@ def bedwithbam(bamfn,win,sv,verbose,q):
             str(edge-1-win),
             str(edge),sv.id,".",".",sv.type,"insert","three-prime"],q)
 
-def snifflesBed(bamfn,win,sv,verbose,q) : 
-    if bamfn is not None :
-        bedwtihbam(bamfn,coord,win,sv,verbose,q)
-        return
-    printBed([sv.chrom,str(sv.pos-1-win),str(sv.pos+win),
-        sv.id,".",".",sv.type,"breakpoint1",sv.fields[-1]],q)
-    printBed([sv.info["CHR2"],str(sv.info["END"]-1-win),str(sv.info["END"]+win),
-        sv.id,".",".",sv.type,"breakpoint2",sv.fields[-1]],q)
-    if sv.type == "DEL" :
-        printBed([sv.chrom,str(sv.pos-1),str(sv.info["END"]+win),
-            sv.id,".",".",sv.type,"body",sv.fields[-1]],q)
-
 def snifflesBam(bamfn,window,sv,verbose,q) :
+    sv.activate()
     win = 500
     sv = SnifflesEntry(svline)
+    if sv.allele == "0/0" : return
     start = sv.pos-win
     end = sv.pos+win
     coord = make_coord(sv.chrom,start,end)
@@ -166,16 +153,8 @@ if __name__=="__main__":
     args=parseArgs()
     if args.verbose : print("reading in SVs",file=sys.stderr)
     svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[0]!="#"]
-    # filter
-    svlist = []
-    for sv in svlines :
-        sv.activate()
-        if (sv.info["SVLEN"] >= args.length and 
-                sv.info["RE"] >= args.readsupport and
-                sv.allele != "0/0" ) :
-            svlist.append(sv)
-    if args.verbose :
-        print("{} SVs out of {} after filtering.".format(len(svlist),len(svlines)),file=sys.stderr)
+    # currently working only with TRA
+    svlines = [x for x in svlines if x.type == "TRA" ]
     # initialze mp
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     manager = mp.Manager()
@@ -185,7 +164,7 @@ if __name__=="__main__":
     watcher = pool.apply_async(listener,(q,args.output,args.bam,args.what,args.verbose))
     jobs = [ pool.apply_async(args.func,
         args = (args.bam,args.window,sv,args.verbose,q))
-        for sv in svlist ]
+        for sv in svlines ]
     output = [ p.get() for p in jobs ]
     # done
     q.put('kill')

@@ -1,4 +1,5 @@
 import math
+import re
 import os
 import csv
 from collections import namedtuple
@@ -48,10 +49,10 @@ class MethRead :
 class SnifflesEntry :
     def __init__(self,line) :
         self.line=line.strip()
-        self.fields=self.line.split("\t")[0:10]
+        self.fields=self.line.split("\t")
         (self.chrom,self.pos,self.id,self.ref,
                 self.type,self.qual,self.filter,self.infostring,
-                self.format,self.genotype) = self.fields
+                self.format,self.genotype) = self.fields[0:10]
         self.pos = int(self.pos)
         self.type = self.type.strip("<").strip(">")
     def activate(self) :
@@ -64,6 +65,8 @@ class SnifflesEntry :
         for entry in self.infofields[1:] :
             self.info[entry[0]] = entry[1]
         self.info["END"] = int(self.info["END"])
+        self.info["RE"] = int(self.info["RE"])
+        self.info["SVLEN"] = int(self.info["SVLEN"])
         self.rnames = self.info["RNAMES"].split(',')
     def parsegenotype(self) :
         self.allele = self.genotype.split(":")[0]
@@ -85,6 +88,11 @@ def bed_to_coord(bedentry) :
     fields=bedentry.strip().split("\t")
     start = str(int(fields[1])+1)
     return fields[0]+":"+start+"-"+fields[2]
+
+def coord_to_bed(coord) :
+    fields=re.split(":|-",coord)
+    return fields[0],int(fields[1]),int(fields[2])
+
 
 def read_bam(fpath,window) :
     with pysam.AlignmentFile(fpath,'rb') as bam :

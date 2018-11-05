@@ -18,6 +18,17 @@ load_db <- function(fpath,extracols=c("regstart","regend")){
     bed.gr=GRanges(bed.tb)
     bed.gr
 }
+
+GRangesTobed <- function(data){
+    bedcols = c("seqnames","start","end","id","score","strand")
+    dat.tb = as.tibble(data)
+    extracols = colnames(dat.tb)[which( ! colnames(dat.tb) %in% c(bedcols,"width"))]
+    dat.tb[,c(bedcols,extracols)]
+}
+
+    
+        
+        
 tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
         if ("GRanges" %in% class(dbpath)){
             # input region is a GRanges object

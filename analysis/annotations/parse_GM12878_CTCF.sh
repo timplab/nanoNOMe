@@ -28,3 +28,7 @@ for width in 400 2000; do
   eval $com
 done
 
+# cgi
+cgi=$dir/../hg38/hg38_cgi.bed
+cgictcf=$prefix.cgi.center.2000bp.bed
+bedtools intersect -wa -f .5 -a $prefix.center.2000bp.bed -b $cgi > $cgictcf

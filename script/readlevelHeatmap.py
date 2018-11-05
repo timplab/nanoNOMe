@@ -1,30 +1,37 @@
-#!/home/isac/.conda/envs/isacenv/bin/python
+#!/usr/bin/python
 # readlevel analysis of NOMe-seq : plot heatmap of co-methylation
 import scipy.stats as ss
 import sys
+import os
 import argparse
 import gzip
 from collections import namedtuple
-from nomeseq_parsers import methInt,MethRead
+from plotnine import *
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-import pandas as pd
+from methylbed_utils import bed_to_coord,coord_to_bed,MethRead,tabix
 blues=["#6BAED6","#4292C6","#2171B5","#08519C","#08306B","#041938"]
-
+import time
+start_time = time.time()
 
 def parseArgs():
     parser = argparse.ArgumentParser( description='plot heatmap of methylation co-occurrence')
-    parser.add_argument('-g', '--gpc', type=str, required=True,
-            help="read-level GpC methylation bed file")
+    parser.add_argument('-v','--verbose',action='store_true',default=False,
+            help="verbose output")
+    parser.add_argument('-i', '--input', type=os.path.abspath, required=True,
+            help="read-level methylation bed file")
+    parser.add_argument('-r','--regions',type=argparse.FileType('r'),
+            required=False,default=sys.stdin, help="windows in bed format (default stdin)")
     parser.add_argument('-o', '--out', type=str, required=False,
-            help="output file path - defaults out to stdout")
-    parser.add_argument('-w','--window',type=int,required=False,default=10,
+            default="heatmap.pdf",help="output file path (default heatmap.pdf)")
+    parser.add_argument('-w','--window',type=int,required=False,default=20,
             help="binning window for calculating methylation")
-    parser.add_argument('-t','--threshold',type=int,required=False,default=5,
+    parser.add_argument('-c','--coverage',type=int,required=False,default=10,
             help="upper limit on number to be displayed as the darkest pixel")
     args = parser.parse_args()
     try : 
@@ -33,111 +40,148 @@ def parseArgs():
         args.out = "heatmap.pdf"
     return args
 
-def readInput(inputpath) :
-    if inputpath.split('.')[-2]=="gz":
-        in_fh=gzip.open(inputpath,'rt')
-    else :
-        in_fh = open(inputpath,'r')
-    return in_fh
-
 class HeatmapRegion :
-    def __init__(self,intersect):
-        self.region=intersect.region
+    def __init__(self,regline):
+        self.regline = regline
+        self.regfields = regline.strip().split("\t")
+        self.coord = bed_to_coord(regline)
+        self.chrom,self.start,self.end = coord_to_bed(self.coord)
+        self.id = self.regfields[3]
+        if len(self.regfields) > 6 :
+            self.name = self.regfields[6]
+        self.center = self.start + np.floor((self.end-self.start)/2)
         self.metharrays=[]
         self.totreads=0
-        self.addread(intersect.methread)
-        self.center=intersect.center
+    def binning(self,num,win) :
+        return round(num/win)*win
     def initDict(self,win) :
-        start=round(self.region.start/win)*win
-        end=round(self.region.end/win)*win
-        self.keys=list(range(start,end,win))
-        self.matrix=np.zeros((len(self.keys),len(self.keys)))
-        self.centerkey=round(self.center/win)*win
+        start = self.binning(self.start,win)
+        end = self.binning(self.end,win)
+        self.keys = list(range(start,end,win))
+        self.dist = [ x - self.binning(self.center,win) for x in self.keys ]
+        self.centerkey = self.binning(self.center,win)
     def addread(self,read):
         self.metharrays.append(read.callarray)
         self.totreads+=1
-    def getMatrix(self,win) :
+    def makeMatrix(self,win) :
         self.initDict(win)
+        self.matrix = np.zeros((len(self.keys),len(self.keys)))
+        self.coverage = np.zeros(len(self.keys))
+        self.meth = np.zeros(len(self.keys))
         for metharray in self.metharrays:
-            calls=[]
-            loci=[]
+            methlist = list()
+            unmethlist = list()
             for pos,call in metharray :
-                key=round(pos/win)*win
-                loci.append(key)
+                key=self.binning(pos,win)
                 if call == 1 :
-                    calls.append(key)
-            calls=list({ self.keys.index(x) for x in calls if x in self.keys })
-            loci=list({ self.keys.index(x) for x in loci if x in self.keys })
-            for i in range(len(calls)) :
-                for j in calls :
-                    self.matrix[calls[i]][j]+=1
-            # fill in the diagonal with call loci - for determining which loci had any call
-            for i in range(len(loci)) :
-                self.matrix[loci[i]][loci[i]]=self.totreads/4
-        return self.matrix
-    def plot(self,thr,out) :
-        matrix_normalized=self.matrix/self.totreads
-        df=pd.DataFrame(matrix_normalized,index=self.keys,columns=self.keys)
-        plt.figure()
-        tickind=round(len(self.keys)/4)
-        ax=sns.heatmap(df,
-                xticklabels=self.keys[0::tickind],
-                yticklabels=self.keys[0::tickind],
-                cmap=sns.color_palette(blues),
-                vmin=0,
-                mask=matrix_normalized<0.25)
-        ax.set(xlabel='Coordinate on {}'.format(self.region.rname))
-        ax.xaxis.set_major_locator(plt.MaxNLocator(4))
-        ax.yaxis.set_major_locator(plt.MaxNLocator(4))
-        centeridx=self.keys.index(self.centerkey)
-        plt.plot([centeridx,centeridx],[0,len(self.keys)])
-        plt.plot([0,len(self.keys)],[centeridx,centeridx])
-        plt.show()
+                    methlist.append(key)
+                elif call == 0 :
+                    unmethlist.append(key)
+            methind = list(np.intersect1d(self.keys,methlist,return_indices=True)[1])
+            self.coverage[methind] += 1
+            self.meth[methind] += 1
+            unmethind = list(np.intersect1d(self.keys,unmethlist,return_indices=True)[1])
+            self.coverage[unmethind] += 1
+            for y in methind :
+                yind = methind.index(y)
+                for x in methind[0:yind] :
+                    self.matrix[y,x]-=1
+            for y in unmethind :
+                yind = unmethind.index(y)
+                for x in unmethind[yind+1:] :
+                    self.matrix[y,x]+=1
+        return 
+    def plot(self,thr,window) :
+        # title
         try :
-            name=self.region.id
+            name=self.name
         except NameError :
-            name=self.region.name
-        title="{} {}:{}-{}".format(self.region.id,
-                self.region.rname,
-                self.region.start,
-                self.region.end)
-        plt.title(title)
-        out.savefig()
-        plt.close()
+            name=self.id
+        title="{} {}:{}-{} ({})".format(name,
+                self.chrom,
+                self.start,
+                self.end,
+                self.regfields[5])
+        # plot range
+        dist_min = min(self.dist)
+        dist_max = max(self.dist)
+        # plot heatmap
+        mat_flat = np.array(np.ndarray.flatten(self.matrix))
+        mat_norm = mat_flat/self.totreads
+        nonzero_idx = np.where(np.absolute(mat_norm)>=0.25)[0]
+        if(len(nonzero_idx)==0) : return
+        xlist = np.array(self.dist*len(self.dist))[nonzero_idx]
+        ylist = np.array(np.repeat(self.dist,len(self.dist)))[nonzero_idx]
+        mat_plt = np.transpose([xlist,ylist,mat_norm[nonzero_idx]])
+        df = pd.DataFrame(mat_plt,columns=["x","y","z"])
+        # diagnoal : any point that had any read
+        cov_idx = np.nonzero(self.coverage)[0]
+        cov_mat = np.transpose([np.array(self.dist)[cov_idx],
+            np.array(self.dist)[cov_idx]])
+        df_cov = pd.DataFrame(cov_mat,columns=["x","y"])
+        g = (ggplot(df) +
+                geom_tile(aes(x='x',y='y',fill='z')) +
+                lims(x=(dist_min,dist_max),
+                    y=(dist_min,dist_max)) +
+                scale_fill_distiller('div',palette="RdBu",
+                    limits=(-1,1),
+                    breaks=(-1,1),
+                    name="Co-occurrence",
+                    labels=("Methylation","Unmethylation")) +
+                geom_tile(inherit_aes=False,data=df_cov,
+                    mapping=aes(x='x',y='y'),fill="black")+
+                labs(x="Distance to center",y="Distance to center",
+                    title=title) +
+                theme_bw() +
+                theme(panel_grid=element_blank(),
+                    axis_text=element_text(color="black"),
+                    figure_size=(3,3))
+                )
+        # plot average
+        cov_idx = np.nonzero(self.coverage)[0]
+        df = pd.DataFrame(np.transpose([np.array(self.dist)[cov_idx],
+            self.meth[cov_idx]/self.coverage[cov_idx]]), 
+            columns=["x","y"])
+        g_avg = (ggplot(df) +
+                geom_line(aes(x='x',y='y'))+
+                lims(x=(dist_min,dist_max),y=(0,1))+
+                labs(x="Distance to center",y="Meth Freq",
+                    title=title)+
+                theme_bw()+
+                theme(panel_grid=element_blank(),
+                    axis_text=element_text(color="black"),
+                    figure_size=(3,1))
+                )
+        return (g_avg,g)
 
 
 def makekey(region):
-    return ".".join([str(x) for x in region])
+    return ".".join([str(x) for x in region.items])
 
-def readlevelHeatmap(gpc,out,thr=5,window=10) :
-    regdict=dict()
-    i=0
-    for line in gpc:
-        intersect_read=methInt(line)
-        key=makekey(intersect_read.region)
-        if key not in regdict.keys():
-            regdict[key]=HeatmapRegion(intersect_read)
-        else : 
-            regdict[key].addread(intersect_read.methread)
-        i+=1
-        if i % 1000 == 0 :
-            print("Read in {} reads".format(i),file=sys.stderr)
-    print("Total {} reads read, plotting heatmaps".format(i),file=sys.stderr)
-    i=0
-    with PdfPages(out) as pdf :
-        for key in list(regdict.keys()) :
-            regdict[key].getMatrix(window)
-            regdict[key].plot(thr,pdf)
-            i+=1
-            print("Plotted {}".format(regdict[key].region.name),
-                    file=sys.stderr)
-            # for debugging
-            if i == 10:
-                break
-    print("Total {} regions processed".format(i),file=sys.stderr)
+def readlevelHeatmap(datapath,reg,thr=5,window=10,verbose=False) :
+    heat = HeatmapRegion(reg)
+    if verbose : print(heat.coord,file=sys.stderr)
+    data = tabix(datapath,heat.coord)
+    for line in data :
+        read = MethRead(line)
+        if ( read.start <= heat.start and
+                read.end >= heat.end ) :
+            heat.addread(read)
+    if verbose : 
+        print("{} reads covering the entire region out of total {} in the region".format(
+            heat.totreads,len(data)),file=sys.stderr)
+    if heat.totreads < thr : return
+    heat.makeMatrix(window)
+    g = heat.plot(thr,window)
+    if verbose : print(heat.name,file=sys.stderr)
+    return g
 
 if __name__=="__main__":
     args=parseArgs()
-    gpc=readInput(args.gpc)
-    readlevelHeatmap(gpc,args.out,args.threshold,args.window)
-    gpc.close()
+    glist = list()
+    for reg in args.regions :
+        g = readlevelHeatmap(args.input,reg,args.coverage,args.window,args.verbose)
+        if g is not None : 
+            glist.append(g)
+    save_as_pdf_pages([g for x in glist for g in x ],filename=args.out)
+    if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)

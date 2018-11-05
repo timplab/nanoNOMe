@@ -82,53 +82,65 @@ dat.spread = regmeth%>%
 dat.spread = bind_cols(dat.spread,
                        as.data.frame(tss.gr[dat.spread$feature.index]))
 
+plotter <- function(dat.plt,plotpath) {
+    # plot
+    g = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
+        facet_wrap(~qtile)+lims(x=c(0,1),y=c(0,1))+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.text = element_text(color="black"),
+              strip.background = element_blank(),
+              plot.title = element_text(size=10,hjust=0),
+              panel.border = element_rect(colour = "black"))+
+        labs(y="CpG methylation",x="GpC accessibility",
+             title="Chromatin state by expression")
+    # scatter plot
+    g.scatter = g + geom_point(size=0.2,alpha=0.5) +
+        geom_rug(size=0.1,alpha=0.5)
+    # heatmap
+    hist = bin_pairwise_methylation(dat.plt)
+    g.heat = g +
+        geom_tile(inherit.aes=F,data=hist,
+                  mapping=aes(y=y,x=x,fill=count))+
+        scale_fill_distiller(palette="Spectral")+
+        theme(legend.position="right")
+    # scatter plot in one
+    g.one = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
+        geom_point(aes(color=factor(qtile)),size=0.5,alpha=0.3)+
+        lims(x=c(0,1),y=c(0,1))+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.text = element_text(color="black"),
+              legend.position="bottom",
+              plot.title = element_text(size=10,hjust=0))+
+        labs(y="CpG methylation",x="GpC accessibility",
+             title="Chromatin state by expression",
+             color="quartile")
+    # density
+    dat.gather = gather(dat.plt,calltype,freq,-qtile)
+    g.density = g +
+        geom_density(inherit.aes=F,data=dat.gather,
+                     mapping=aes(x=freq,y=..scaled..))+
+        facet_grid(calltype~qtile) +
+        labs(y="Density",x="Methylation frequency",
+             title="Methylation density by expression")
+    # print
+    pdf(plotpath,useDingbats=F,height=3,width=3)
+    print(g.one)
+    print(g.scatter)
+    print(g.heat)
+#    print(g.density)
+    dev.off()
+}
 dat.plt=dat.spread %>%
     select(c("gpc","cpg","qtile"))
-dat.plt$qtile = factor(dat.plt$qtile)
-levels(dat.plt$qtile) = c("1st quartile","2nd quartile","3rd quartile","4th quartile")
 
 # subsample by min qtile
 minnum = min(table(dat.plt$qtile))
 dat.plt=dat.plt%>%group_by(qtile)%>%
     do(sample_n(.,minnum))
-
-# plot
-g = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
-    facet_grid(.~qtile)+lims(x=c(0,1),y=c(0,1))+
-    theme(panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank(),
-          axis.text = element_text(color="black"),
-          strip.background = element_blank(),
-          panel.border = element_rect(colour = "black"))+
-    labs(y="CpG methylation",x="GpC accessibility",
-         title="GM12878 chromatin state by expression quartile")
-
-# scatter plot
-g.scatter = g + geom_point(size=0.2,alpha=0.5) +
-    geom_rug(size=0.1,alpha=0.5)
-
-# heatmap
-hist = bin_pairwise_methylation(dat.plt)
-g.heat = g +
-    geom_tile(inherit.aes=F,data=hist,
-              mapping=aes(y=y,x=x,fill=count))+
-    scale_fill_distiller(palette="Spectral")+
-    theme(legend.position="right")
-# density
-dat.gather = gather(dat.plt,calltype,freq,-qtile)
-g.density = g +
-    geom_density(inherit.aes=F,data=dat.gather,
-                 mapping=aes(x=freq,y=..scaled..))+
-    facet_grid(calltype~qtile) +
-    labs(y="Density",x="Methylation frequency",
-         title="GM12878 methylation density by expression quartile")
-
 plotpath=file.path(plotdir,paste0(cell,"_CpGvsGpCvsExp_scatter.pdf"))
-pdf(plotpath,useDingbats=F,height=3.5,width=12)
-print(g.scatter)
-print(g.heat)
-print(g.density)
-dev.off()
+plotter(dat.plt,plotpath)
 
 # cgi 
 # cgi db
@@ -140,46 +152,21 @@ cgi.id = tss.cgi$id
 dat.plt=dat.spread[match(tss.cgi$id,tss.gr$id),] %>%
     na.omit()%>%
     select(c("gpc","cpg","qtile"))
-dat.plt$qtile = factor(dat.plt$qtile)
-levels(dat.plt$qtile) = c("1st quartile","2nd quartile","3rd quartile","4th quartile")
 
 # subsample by min qtile
 minnum = min(table(dat.plt$qtile))
 dat.plt=dat.plt%>%group_by(qtile)%>%
     do(sample_n(.,minnum))
 
-# plot
-g = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
-    facet_grid(.~qtile)+lims(x=c(0,1),y=c(0,1))+
-    theme(panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank(),
-          axis.text = element_text(color="black"))+
-    labs(y="CpG methylation",x="GpC accessibility",
-         title="GM12878 chromatin state by expression quartile")
-
-# scatter plot
-g.scatter = g + geom_point(size=0.2,alpha=0.5)
-
-# heatmap
-hist = bin_pairwise_methylation(dat.plt)
-g.heat = g +
-    geom_tile(inherit.aes=F,data=hist,
-              mapping=aes(y=y,x=x,fill=count))+
-    scale_fill_distiller(palette="Spectral")+
-    theme(legend.position="right")
-
-# density
-dat.gather = gather(dat.plt,calltype,freq,-qtile)
-g.density = g +
-    geom_density(inherit.aes=F,data=dat.gather,
-                 mapping=aes(x=freq,y=..scaled..))+
-    facet_grid(calltype~qtile) +
-    labs(y="Density",x="Methylation frequency",
-         title="GM12878 methylation density by expression quartile")
-
 plotpath=file.path(plotdir,"GM12878_CGI_CpGvsGpCvsExp_scatter.pdf")
-pdf(plotpath,useDingbats=F,height=3.5,width=12)
-print(g.scatter)
-print(g.heat)
-print(g.density)
-dev.off()
+plotter(dat.plt,plotpath)
+# non-cgi
+dat.plt = dat.spread[-match(tss.cgi$id,tss.gr$id),] %>%
+    na.omit() %>%
+    select(c("gpc","cpg","qtile"))
+# subsample by min qtile
+minnum = min(table(dat.plt$qtile))
+dat.plt=dat.plt%>%group_by(qtile)%>%
+    do(sample_n(.,minnum))
+plotpath=file.path(plotdir,"GM12878_nonCGI_CpGvsGpCvsExp_scatter.pdf")
+plotter(dat.plt,plotpath)

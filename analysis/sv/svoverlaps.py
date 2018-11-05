@@ -1,10 +1,11 @@
 #!/usr/bin/python
 import os
 import sys
-root = "/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/sv"
-cells = [ "GM12878","MCF10A","MCF7","MDAMB231" ]
-vcfs = [ root+"/"+x+".sniffles.vcf" for x in cells ]
-out = os.path.join(root,"SVcomparison.vcf")
+root = sys.argv[1]
+svdir = os.path.join(root,"pooled/sv")
+cells = [ "MCF10A","MCF7","MDAMB231" ]
+vcfs = [ svdir +"/"+x+".sniffles.vcf" for x in cells ]
+out = os.path.join(svdir,"SVcomparison.vcf")
 n = 3 # rounding digits
 
 def read_vcf(fp) :
@@ -26,18 +27,22 @@ def read_vcf(fp) :
 print("reading data",file=sys.stderr)
 data = [ read_vcf(x) for x in vcfs ]
 
-cseq = list(range(len(cells)))
+clen = len(cells)
 keylist = [ key for d in data for key in d.keys() ]
 keys = set(keylist)
-print("{} unique SVs out of total {}".format(len(keys),len(keylist)),file=sys.stderr)
+print("{} SVs out of total {}".format(len(keys),len(keylist)),file=sys.stderr)
 
 out_fh = open(out,'w')
+svnum = 0
 for key in keys :
-    tag = ["x"]*len(cells)
-    for i in cseq :
+    tag = ["x"]*clen
+    for i in range(clen):
         try : 
             line = data[i][key]
             tag[i] = "o"
         except : pass
-    print(line+"\t"+''.join(tag),file=out_fh)
+    if tag != ["o"]*clen :
+        svnum+=1
+        print(line+"\t"+''.join(tag),file=out_fh)
+print("{} Unique SVs".format(svnum),file=sys.stderr)
 out_fh.close()

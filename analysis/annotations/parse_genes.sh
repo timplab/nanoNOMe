@@ -4,6 +4,8 @@ dir=$(dirname $(readlink -f $0))
 echo "parsing genes"
 db="$1"
 prefix=${db%%.*}
+dbdir=$(dirname "$db")
+gs=$dbdir/../hg38/hg38_genomesize.txt
 
 # convert to bed
 bed=$prefix.bed
@@ -13,36 +15,36 @@ eval $com
 
 # get TSS
 tss=$prefix.TSS.bed
-com="python $dir/../../util/bed_parser.py getstart -b $bed -o $tss"
+com="$dir/../../util/getTSS.sh $bed > $tss"
 echo $com
 eval $com
 
 # get regions around TSS
-for width in 400 2000;do
+for width in 400 2000 5000 10000;do
   side=$(($width/2))
   region=$prefix.TSS.${width}bp.bed
-  com="python $dir/../../util/bed_parser.py region -u $side -d $side \
-    -b $tss | sort -k1,1 -k2,2n > $region"
+  com="bedtools slop -b $side -i $tss -g $gs|\
+    sort -k1,1 -k2,2n > $region"
   echo $com
   eval $com
 done
 
 
 # for transcripts
+echo "transcripts"
 base=${prefix%%_*}
 prefix=${base}_transcripts
 bed=$prefix.bed
-[ -e $bed ]||\
-  $dir/../../util/gtfTobed.sh $db transcript > $bed
+$dir/../../util/gtfTobed.sh $db transcript > $bed
 # get TSS
 tss=$prefix.TSS.bed
-[ -e $tss ]||\
-  python $dir/../../util/bed_parser.py getstart -b $bed -o $tss
+python $dir/../../util/getTss.sh $bed > $tss
 # get regions around TSS
-for width in 400 2000;do
+for width in 400 2000 5000 10000;do
   side=$(($width/2))
   region=$prefix.TSS.${width}bp.bed
-  [ -e $region ]||\
-    python $dir/../../util/bed_parser.py region -u $side -d $side \
-    -b $tss | sort -k1,1 -k2,2n > $region
+  com="bedtools slop -b $side -i $tss -g $gs|\
+    sort -k1,1 -k2,2n > $region"
+  echo $com
+  eval $com
 done

@@ -73,8 +73,11 @@ if [[ $STEP =~ all|step0|gmAnnotation ]];then
   # ctcf
   # download chip data
   CHIP=$DBDIR/GM12878_CTCF_ChIP.bed
-  wget https://www.encodeproject.org/files/ENCFF356LIU/@@download/ENCFF356LIU.bed.gz \
-    -O $CHIP.gz && gunzip $CHIP.gz
+  if [ ! -e $CHIP ];then
+    wget https://www.encodeproject.org/files/ENCFF356LIU/@@download/ENCFF356LIU.bed.gz \
+      -O $CHIP.gz 
+    gunzip $CHIP.gz
+  fi
   awk 'OFS="\t"{ print $1,$4-1,$5,".",".",$7 }' annotations/CTCF_bindingsites.txt \
     > annotations/CTCF_bindingsites_hg19.bed
   CTCF=annotations/CTCF_bindingsites_hg38.bed
@@ -84,13 +87,24 @@ if [[ $STEP =~ all|step0|gmAnnotation ]];then
     $CTCF $CTCF.unmapped
   # parse to get GM12878
   $CODEROOT/annotations/parse_GM12878_CTCF.sh $DBDIR $CTCF
-
   #DNAse
   DNASE=$DBDIR/GM12878_DNAse.bed
-  wget https://www.encodeproject.org/files/ENCFF590NWM/@@download/ENCFF590NWM.bed.gz \
-    -O $DNASE.gz && gunzip $DNASE.gz
-  $CODEROOT/annotations/parse_GM12878_DNAse.sh $DBDIR $DNASE
+  if [ ! -e $DNASE ];then
+    wget https://www.encodeproject.org/files/ENCFF590NWM/@@download/ENCFF590NWM.bed.gz \
+      -O $DNASE.gz 
+    gunzip $DNASE.gz
+  fi
 
+  $CODEROOT/annotations/parse_GM12878_DNAse.sh $DBDIR $DNASE
+  #RNA-seq
+  RNA=$DBDIR/GM12878_RNAseq
+  [ -e ${RNA}_1.tsv ]||\
+    wget https://www.encodeproject.org/files/ENCFF212CQQ/@@download/ENCFF212CQQ.tsv \
+    -O ${RNA}_1.tsv
+  [ -e ${RNA}_2.tsv ]||\
+    wget https://www.encodeproject.org/files/ENCFF350QZU/@@download/ENCFF350QZU.tsv \
+    -O ${RNA}_2.tsv
+  Rscript $CODEROOT/annotations/parse_GM12878_RNAseq.R $ROOT 2> /dev/null
 fi
 
 if [[ $STEP =~ all|step0|gmData ]];then
@@ -119,24 +133,22 @@ fi
 if [[ $STEP =~ all|step0|bcanAnnotation ]];then
   DBDIR=$ROOT/annotations/breastcancer
   [ -e $DBDIR ]||mkdir -p $DBDIR
-  hg38genes=$ROOT/annotations/hg38/hg38_genes.bed
-  bcan=annotations/bcan_genes_CancerGeneCensus.txt
-  names=$(awk 'NR>1{ print $1 }' $bcan)
-  BCANBED=$DBDIR/bcan_genes.bed
-  BCANPROM=$DBDIR/bcan_genes.promoter.bed
-  grep -F "$names" $hg38genes > $BCANBED
-  parser=$CODEROOT/../util/bed_parser.py 
-  python $parser getstart -b $BCANBED |\
-    python $parser region -u 2000 -d 3000  |\
-    sort -k1,1 -k2,2n > $BCANPROM
-  # repetitive regions near bcan genes
-  rep=$ROOT/annotations/hg38/hg38_repeats.bed
-  proxrep=$DBDIR/repeats_bcan_proximity.bed
-  bedtools closest -D b -a $rep -b $BCANBED |\
-    awk '{ if(sqrt($NF*$NF) <= 5000) print }' > $proxrep
-  bodyrep=$DBDIR/repeats_bcan_body.bed
-  bedtools intersect -wo -a $rep -b $BCANBED > $bodyrep
+  echo "bcan genes"
+  $CODEROOT/annotations/parse_bcangenes.sh $ROOT
   cp annotations/bcan_10a_vs_231_repeats.bed $ROOT/annotations/breastcancer/
+  # enhancer
+  echo "enhancers"
+  PRE=$DBDIR/MCF10A_enhancer
+  [ -e ${PRE}_hg19.txt ]||\
+    wget http://www.enhanceratlas.org/data/AllEPs/MCF10A_EP.txt \
+    -O ${PRE}_hg19.txt
+  $CODEROOT/annotations/parse_bcan_enhancers.sh $DBDIR
+  # expression data
+  echo "rnaseq data"
+  EXP=$DBDIR/bcan_rnaseq.txt
+  wget ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE75nnn/GSE75168/suppl/GSE75168_MCF10A_MCF7_MDA-MB-231_HTSeq_Counts.txt.gz \
+    -O $EXP.gz
+  gunzip $EXP.gz
 fi
 
 
@@ -186,7 +198,7 @@ if [[ $STEP =~ all|step2|gm12878exp ]];then
   echo "GM12878 tss chromatin by expression plots"
   Rscript $CODEROOT/frequency/181015_gm12878_tss_chromatin_by_exp.R $ROOT 2> /dev/null
 fi
-# repeats
+# coverage
 if [[ $STEP =~ all|step2|gm12878coverage ]];then
   echo "GM12878 BS-seq vs nanoNOMe coverage comparison"
   # first global plots
@@ -208,15 +220,19 @@ fi
 
 # bcan promoters, read-level
 if [[ $STEP =~ all|step3|bcangenes ]];then
-  echo "bresat cancer sample gene comparisons"
-  $CODEROOT/igv/bcan_igv_plotting.sh $ROOT bcanpromoter
+  echo "bresat cancer sample gene promoters comparisons"
+#  $CODEROOT/frequency/180910_bcan_promoter.R $ROOT 2> /dev/null
+#  $CODEROOT/igv/bcan_igv_plotting.sh $ROOT bcanpromoter
+  echo "co-methylation heatmap"
+  $CODEROOT/read_level/181024_bcan_heatmap.sh $ROOT rna
 fi
+# bcan enhancer-promoter - do all transcripts instead of just bcan genes
 
 
 ############################################################
 #
 # Step 4. Figure 4 SV analysis - 
-#         MDA-MB-231-exclusive SV falling in bcan gene with 
+#         exclusive SV falling in bcan gene with 
 #         interesting chromatin pattern
 #
 ############################################################
@@ -224,8 +240,6 @@ fi
 if [[ $STEP =~ all|step4|sv ]];then
   echo "bresat cancer sample sv comparisons"
   $CODEROOT/sv/181020_bcanSV.sh
-#  $CODEROOT/frequeyncy/bcan_sv_mfreq_comparison.R
+  echo "igv"
+  $CODEROOT/igv/bcan_igv_plotting.sh $ROOT bcansv
 fi
-
-
-

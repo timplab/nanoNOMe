@@ -1,87 +1,56 @@
 #!/usr/bin/Rscript
+library(getopt)
+srcdir=dirname(get_Rscript_filename())
+if (is.na(srcdir)){ srcdir="." }
 library(tidyverse)
 library(GenomicRanges)
-library(ggridges)
-library(GGally)
-source("../../plot/methylation_plot_utils.R")
-parser="../../nanopolish/parseMethylFreq.py"
+library(parallel)
+source(file.path(srcdir,"../../script/methylation_plot_utils.R"))
 
 # set this to TRUE to remove unnecessary objects throughout the process
 limitedmem=TRUE
 cores = detectCores()-2
 
 # set directories
-ref = "/mithril/Data/NGS/Reference/hg38_noalt/hg38_noalt.fa"
-root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
-plotdir=file.path(root,"plots/promoters")
-if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
+root=commandArgs(trailingOnly=TRUE)[1]
+if (is.na(root)){
+    root="/dilithium/Data/Nanopore/projects/nomeseq/analysis" # default
+}
+outdir=file.path(root,"annotations/breastcancer")
+outpath=file.path(outdir,"bcan_10a_vs_231_promoters.bed")
+plotpath=file.path(root,"plots/promoters")
 datroot=file.path(root,"pooled/methylation/mfreq_all")
-regdir=file.path(root,"database/hg38/")
-# get file paths of data
-cells=c("GM12878","MCF10A","MCF7","MDAMB231")
+cells=c("MCF10A","MDAMB231")
 fpaths=tibble(cell=cells,
           cpg=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz")),
           gpc=file.path(datroot,paste0(cell,".gpc.methfreq.txt.gz")))
 pd=gather(fpaths,key=calltype,value=filepath,-cell)
+cgi = file.path(root,"annotations/hg38/hg38_cgi.bed")
 
-# regions
-if (T){
-    reg.fp = file.path(regdir,"hg38_genes.TSS.400bp.bed")
-    regname="prom"
-    subset=FALSE
-}
-#read in regions
-cat("reading in the region\n")
-extracols=c("TSS","TSSend")
-db = load_db(reg.fp,extracols)
+dbpath = file.path(root,"annotations/breastcancer/bcan_genes.TSS.400bp.bed")
 
-# getting regional methylation
-# first test with 1k lines
-coms = lapply(pd$filepath,function(x){
-    paste0("head -n1000 ",reg.fp," | python ",parser," by-region -v -t 12 -i ",x)#," -r ",reg$filepath)
+dat.list = mclapply(mc.cores=cores,seq(dim(pd)[1]),function(i){
+    tabix_mfreq(pd$filepath[i],dbpath)
 })
-coms = lapply(pd$filepath,function(x){
-    paste0("python ",parser," by-region -t ",cores," -i ",x," -r ",reg.fp)
-})
-
-cnames = c("chrom","start","end","id","score","strand",extracols,"freq","cov","numsites")
-dat.raw = lapply(coms,function(x){
-    print(x)
-    y = system(x,intern=T)
-    out = as.tibble(do.call(rbind,strsplit(y,"\t")))
-    names(out) = cnames
-    out
-})
-
-dat.named = lapply(seq_along(dat.raw),function(i){
-    dat.raw[[i]]%>%type_convert()%>%
+db.gr = load_db(dbpath,"genename")
+regmeth.list = lapply(seq_along(dat.list),function(i){
+    getRegionMeth(dat.list[[i]],db.gr) %>%
         mutate(cell=pd$cell[i],
                calltype=pd$calltype[i])
 })
+regmeth = do.call(rbind,regmeth.list)
 
-dat.all = do.call(rbind,dat.named)
+meth.spread = regmeth %>% select(-totcov,-numsites) %>%
+    spread(cell,freq) %>%
+    replace(.,is.na(.),0)%>%
+    mutate(del=MDAMB231-MCF10A) %>%
+    select(-MCF10A,-MDAMB231) %>%
+    spread(calltype,del) %>%
+    na.omit() %>%
+    arrange(desc(abs(gpc)),desc(abs(cpg)))
 
-# spread by cell 
-dat.spread = dat.all %>%
-    select(-TSSend,-cov,-numsites)%>%
-    spread(cell,freq)
-# get delta
-dat.del = dat.spread %>%
-    mutate(del=MCF10A-MCF7)
-
-# spread by cpg and gpc
-del.sum = dat.del %>%
-    select(-GM12878,-MCF10A,-MCF7,-MDAMB231)%>%
-    spread(calltype,del)%>%
-    na.omit()
-
-# order by cumulative difference (after -gpc)
-sum.order = del.sum %>%
-    mutate(gpc=-gpc,
-           score=cpg+gpc)%>%
-    arrange(desc(gpc))
-    
-# output bed
-n = 100
-bedout = file.path(plotdir,"mdaVS10a_promoters.bed")
-write_tsv(sum.order[1:n,],bedout,col_names=F)
+topregs = db.gr[unique(head(meth.spread$feature.index,n=20))]
+awidth = 5000
+regs.adjust = resize(topregs,width=awidth,fix="center")
+bed.tb = GRangesTobed(regs.adjust)
+write_tsv(bed.tb,outpath,col_names=F)

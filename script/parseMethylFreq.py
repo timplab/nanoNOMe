@@ -22,8 +22,8 @@ def parseArgs() :
     subparsers = parser.add_subparsers()
     # parent
     parent_parser = argparse.ArgumentParser(add_help=False)
-    parent_parser.add_argument('-t','--threads',type=int,required=False,default=1, 
-            help="number of parallel processes (default : 1 )")
+    parent_parser.add_argument('-t','--threads',type=int,required=False,default=2, 
+            help="number of parallel processes (default : 2 )")
     parent_parser.add_argument('-v','--verbose', action='store_true',default=False,
             help="verbose output")
     parent_parser.add_argument('-i','--input',type=os.path.abspath,required=False,

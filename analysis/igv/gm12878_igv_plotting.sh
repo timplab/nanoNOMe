@@ -1,7 +1,7 @@
 #!/bin/bash
 srcdir=$(dirname $(readlink -f $0))
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-[ -n $1 ]||root="$1"
+[ -z $1 ]||root="$1"
 bed=$root/annotations/breastcancer/bcan_10a_vs_231_repeats.bed
 reg=bcan_sig_repeats
 outdir=$root/igv

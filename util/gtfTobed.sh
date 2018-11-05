@@ -9,10 +9,10 @@ ann=${ann:=gene}
 pre="gunzip -c $1 | grep -v \"#\""
 post="tr -d '\";' | sort -k1,1 -k2,2n"
 if [ "$ann" == "gene" ];then
-  eval $pre | awk '{ OFS="\t" }{ if($3=="gene") print $1,$4-1,$5,$10,".",$7,$14,$18 }' |\
+  eval $pre | awk '{ OFS="\t" }{ if($3=="gene") print $1,$4-1,$5,$10,".",$7,$14 }' |\
     eval $post
 elif [ "$ann" == "transcript" ];then
-  eval $pre | awk 'OFS="\t"{ if($3=="transcript") print $1,$4-1,$5,$14,".",$7,$18,$10 }' |\
+  eval $pre | awk 'OFS="\t"{ if($3=="transcript") print $1,$4-1,$5,$12,".",$7,$10,$16 }' |\
     eval $post
 fi
 

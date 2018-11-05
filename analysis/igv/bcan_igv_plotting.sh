@@ -1,16 +1,16 @@
 #!/bin/bash
 srcdir=$(dirname $(readlink -f $0))
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-[ -n $1 ]||root="$1"
+[ -z $1 ]||root="$1"
 outdir=$root/igv
 [ -e $outdir ]||mkdir $outdir
 annodir=$root/annotations/breastcancer
 reg="bcanpromoter"
-[ -n $2 ]||reg="$2"
+[ -z $2 ]||reg="$2"
 if [ "$reg" == "bcanpromoter" ];then
   bed=$annodir/bcan_10a_vs_231_promoters.bed
-elif [ "$reg" == "done" ];then
-  bed="done"
+elif [ "$reg" == "bcansv" ];then
+  bed=$annodir/sv_bcangenes.bed
 fi
 
 cells="MCF10A MCF7 MDAMB231"
