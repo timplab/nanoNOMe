@@ -26,7 +26,7 @@ class MethQuery:
             self.start=int(self.fields[2])+offset
             self.motif="CG"
         elif mod=="gpc" :
-            self.start=int(self.fields[2])+offset # offset from methylation calls - 1-based
+            self.start=int(self.fields[2])+1+offset # offset from methylation calls - 1-based
             self.motif="GC"
         self.strand=self.fields[1]
         self.qname=self.fields[4]
