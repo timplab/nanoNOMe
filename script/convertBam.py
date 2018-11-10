@@ -19,8 +19,8 @@ def parseArgs() :
     srcdir=os.path.dirname(os.path.abspath(srcpath))
     # parser
     parser = argparse.ArgumentParser(description='convert bam to be igv compatible')
-    parser.add_argument('-t','--threads',type=int,required=False,default=1, 
-            help="number of parallel processes (default : 1 )")
+    parser.add_argument('-t','--threads',type=int,required=False,default=2, 
+            help="number of parallel processes (default : 2 )")
     parser.add_argument('-v','--verbose', action='store_true',default=False,
             help="verbose output")
     parser.add_argument('-b','--bam',type=os.path.abspath,required=True,
@@ -92,7 +92,11 @@ def convert_nome(bam,cpg,gpc) :
     return change_sequence(bam_cpg,gpc,"gpc")
 
 def reset_bam(bam) :
-    refseq = bam.get_reference_sequence()
+    try : 
+        refseq = bam.get_reference_sequence()
+    except ValueError :
+        # MD tag not present probably means bam already fed through nanopolish phase-read
+        refseq = bam.query_alignment_sequence
     bam.query_sequence = refseq
     bam.cigarstring = ''.join([str(len(refseq)),"M"])
     return bam
@@ -160,7 +164,10 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
 
 def main() :
     args=parseArgs()
-    windows = [ bed_to_coord(x) for x in args.regions ]
+    if args.window : 
+        windows = [args.window]
+    else : 
+        windows = [ bed_to_coord(x) for x in args.regions ]
     # initialize mp
     manager = mp.Manager()
     q = manager.Queue()
