@@ -26,9 +26,6 @@ GRangesTobed <- function(data){
     dat.tb[,c(bedcols,extracols)]
 }
 
-    
-        
-        
 tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
         if ("GRanges" %in% class(dbpath)){
             # input region is a GRanges object
@@ -139,19 +136,18 @@ getCenter <- function(db.gr){
 getRegionMeth <- function(query,subject,thr=2,verbose=TRUE){
     if (class(query)[1] != "GRanges") {
         if (verbose) cat("converting data to GRanges\n")
-        query=GRanges(query)
+        query.gr=GRanges(query)
     }
     if (class(subject)[1] != "GRanges"){
         if (verbose) cat("converting subject to GRanges\n")
         subject=GRanges(subject)
     }
     if (verbose) cat("finding overlaps\n")
-    ovl=findOverlaps(query,subject)
-    freq.tb=tibble(freq=query$freq[queryHits(ovl)],
-                   cov=query$cov[queryHits(ovl)],
-                   feature.index=subjectHits(ovl))
+    ovl=findOverlaps(query.gr,subject)
+    freq.tb=query[queryHits(ovl),]
+    freq.tb$feature.index = subjectHits(ovl)
     if (verbose) cat("calculating methylation by region\n")
-    freq.tb[which(freq.tb$cov>=thr),] %>% group_by(feature.index)%>%
+    freq.tb[which(freq.tb$cov>=thr),] %>% group_by(feature.index,add=TRUE)%>%
         summarize(totcov=sum(cov),
                   numsites=n(),
                   freq=mean(freq))

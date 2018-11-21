@@ -26,7 +26,7 @@ CODEROOT=$(readlink -f $PWD/analysis)
 
 ############################################################
 #
-# Step 0. Download data and install software
+# Step 00. Download data and install software
 # 
 ############################################################
 
@@ -149,18 +149,42 @@ if [[ $STEP =~ all|step0|bcanAnnotation ]];then
   wget ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE75nnn/GSE75168/suppl/GSE75168_MCF10A_MCF7_MDA-MB-231_HTSeq_Counts.txt.gz \
     -O $EXP.gz
   gunzip $EXP.gz
+  Rscript $CODEROOT/annotations/181031_bcan_rnaseq.R
 fi
 
 
 
 ############################################################
 #
-# Step 1. Basecalling, alignment, methylation calling,
+# Step 0b. Basecalling, alignment, methylation calling,
 #         and converting to methylation bed format
 #
 ############################################################
 
 
+############################################################
+#
+# Step 1. methylation model data analysis
+#
+############################################################
+
+if [[ $STEP =~ all|step1|events ]];then
+  echo "event comparison for select kmers"
+  Rscript $CODEROOT/model_training/ecoli_event_kmer_comparison.R 2> /dev/null
+fi
+if [[ $STEP =~ all|step1|roc ]];then
+  echo "roc curve"
+  # cpg
+  python script/test_methylmodel.py roc -v \
+    --methylated $ROOT/data/na12878_methylation/NA12878_CpG.cpg.meth.subset.tsv \
+    --unmethylated $ROOT/data/na12878_methylation/NA12878_unmethylated.cpg.meth.subset.tsv \
+    -o $ROOT/plots/model/NA12878_CpG_ROC.pdf -n 100000
+  # gpc
+  python script/test_methylmodel.py roc -v --motif GC \
+    --methylated $ROOT/data/na12878_methylation/NA12878_GpC.gpc.meth.subset.tsv \
+    --unmethylated $ROOT/data/na12878_methylation/NA12878_unmethylated.gpc.meth.subset.tsv \
+    -o $ROOT/plots/model/NA12878_GpC_ROC.pdf -n 100000
+fi
 
 ############################################################
 #

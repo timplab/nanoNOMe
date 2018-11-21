@@ -35,6 +35,8 @@ def parseArgs() :
             default=200,help="window for methylation")
     parser.add_argument('--type',type=str,required=False,
             default="TRA",help="type of SV to parse (default: TRA)")
+    parser.add_argument('--zygosity',type=str,required=False,
+            default="het",help="zygosity of SVs (one of 'het','hom', default 'het')")
     parser.add_argument('-o','--output',type=str,required=False, 
             default = "stdout",help="output path (default : stdout)")
     # parse args
@@ -75,15 +77,15 @@ def parse_methylation(q,sv,cpg,gpc,start,end,tag) :
     q.put((qname+sv.id+tag,line))
 
 def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
-    sv.activate()
-    # if majority supports reference, drop
-    if sv.allele == "0/0" : return
     # windows for fetching reads - 
     win = 300
     win1 = make_coord(sv.chrom,sv.pos-win,sv.pos+win)
     win2 = make_coord(sv.info["CHR2"],sv.info["END"]-win,sv.info["END"]+win)
     # fetch reads
-    bam_dicts = [ read_bam(bamfn,w) for w in [win1,win2] ]
+    try : 
+        bam_dicts = [ read_bam(bamfn,w) for w in [win1,win2] ]
+    except ValueError : 
+        return
     cpg_dicts = [ read_tabix(cpgfn,w) for w in [win1,win2] ]
     gpc_dicts = [ read_tabix(gpcfn,w) for w in [win1,win2] ]
     qnames = list(bam_dicts[0].keys()) + list(bam_dicts[1].keys())
@@ -95,15 +97,15 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
             if qname in cpg_dicts[0].keys() and qname in gpc_dicts[0].keys() :
                 cpg1 = cpg_dicts[0][qname]
                 gpc1 = gpc_dicts[0][qname]
-                parse_methylation(q,sv,cpg1,gpc1,sv.pos-methwin,sv.pos+methwin,"target_SV")
+                parse_methylation(q,sv,cpg1,gpc1,sv.pos-methwin,sv.pos+methwin,"destination_SV")
             if qname in cpg_dicts[1].keys() and qname in gpc_dicts[1].keys() :
                 cpg = cpg_dicts[1][qname]
                 gpc = gpc_dicts[1][qname]
-                start,end,tag = (sv.info["END"]-methwin,sv.info["END"]+methwin,"insert_SV")
+                start,end,tag = (sv.info["END"]-methwin,sv.info["END"]+methwin,"origin_SV")
             else :
                 continue
         elif ( qname in bam_dicts[1] ) :
-            # insert not SV
+            # non-SV origin
             if qname in cpg_dicts[1].keys() and qname in gpc_dicts[1].keys() :
                 cpg = cpg_dicts[1][qname]
                 gpc = gpc_dicts[1][qname]
@@ -111,9 +113,9 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
                 continue
             coords = [ pos for x in bam_dicts[1][qname] for pos in [x.reference_start,x.reference_end] ]
             start,end = (sv.info["END"]-methwin,sv.info["END"]+methwin)
-            tag = "insert_noSV"
+            tag = "origin_nonSV"
         elif ( qname in bam_dicts[0] ) :
-            # target not SV
+            # non-SV destination
             try :
                 cpg = cpg_dicts[0][qname]
                 gpc = gpc_dicts[0][qname]
@@ -122,14 +124,14 @@ def TRA_methylation(sv,bamfn,cpgfn,gpcfn,methwin,verbose,q) :
             coords = [ pos for x in bam_dicts[0][qname] for pos in [x.reference_start,x.reference_end] ]
             start,end = (sv.pos-methwin,sv.pos+methwin)
             bp = [ x for x in coords if x >= sv.pos-win and x <= sv.pos+win ]
-            tag = "target_noSV"
+            tag = "destination_nonSV"
         parse_methylation(q,sv,cpg,gpc,start,end,tag)
 
-def main() :
+if __name__=="__main__":
     args=parseArgs()
-    if args.verbose : print("parsing sniffles file",file=sys.stderr)
-    svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[1]!="#"]
-    sv_type = [x for x in svlines if x.type == args.type]
+    if args.verbose : print("filtering sniffles file for {} {}".format(args.zygosity,args.type),file=sys.stderr)
+    svlines = [SnifflesEntry(x) for x in args.sniffles.readlines() if x[0]!="#"]
+    sv_type = [x for x in svlines if x.type == args.type and x.zygosity == args.zygosity ]
     if args.verbose : print("{} SVs selected out of {}".format(len(sv_type),len(svlines)),file=sys.stderr)
     if args.verbose : print("using {} parallel processes".format(args.threads),file=sys.stderr)
     manager,q,pool = init_mp(args.threads)
@@ -147,7 +149,3 @@ def main() :
     output = [ p.get() for p in jobs ]
     close_mp(q,pool)
     if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
-
-if __name__=="__main__":
-    main()
-

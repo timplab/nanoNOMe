@@ -97,12 +97,15 @@ class SiteStats:
             motifcontext,tricontext]]),file=out)
 
 def getFreq(args,in_fh):
+    if args.verbose : print("getting frequency",file=sys.stderr)
     sites=dict()
+    n = 0
     for line in in_fh:
         try : 
             line = line.decode('ascii')
         except AttributeError :
             pass
+        n += 1
         read=MethRead(line)
         sitekeys=sorted(sites.keys())
 #        print(sitekeys)
@@ -123,6 +126,9 @@ def getFreq(args,in_fh):
             if  key not in sites.keys():
                 sites[key] = SiteStats(read.calldict[key],read.rname)
             sites[key].update(read.calldict[key])
+        if args.verbose : 
+            if n % 10000  == 0:
+                print("parsed {} lines".format(n),file=sys.stderr)
     for key in sorted(sites.keys()):
         sites[key].printFreq(args.motif,args.out)
 

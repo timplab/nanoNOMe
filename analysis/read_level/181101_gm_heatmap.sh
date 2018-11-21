@@ -21,8 +21,9 @@ done
 echo $pres
 
 meth=$methdir/{}.pooled.meth.bed.gz
-plotpath=$plotdir/{}.$reg.heatmap.pdf
+plotpath=$plotdir/{}.$reg.heatmap_horizontal.pdf
+log=$plotdir/{}.$reg.heatmap.log
 com="python -u $srcdir/../../script/readlevelHeatmap.py -v -w 20 -c 5 \
-  -i $meth -r $bed -o $plotpath"
+  -i $meth -r $bed -o $plotpath 2> $log"
 echo $com
 parallel "$com" ::: $pres
