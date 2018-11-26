@@ -31,7 +31,7 @@ if __name__=="__main__":
     if args.verbose : print("making a dict of the index",file=sys.stderr)
     if args.s3index is not None :
         for line in args.s3index :
-            fields = line.strip().split("\t")
+            fields = line.strip().split()
             path=fields[1].split(":")
             key_dict[fields[0]] = path[1]
             args.bucket=path[0]
