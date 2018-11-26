@@ -1,4 +1,5 @@
 #!/bin/bash
+export LC_ALL=C
 root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
 dir=$root/subset/ctcf
 f5dir=$dir/fast5
@@ -9,7 +10,7 @@ methdir=$root/pooled/methylation/methbyread_all
 cell=GM12878
 ref="/mithril/Data/NGS/Reference/hg38_noalt/hg38_noalt.fa"
 s3idx="/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/index/181110_GM12878_s3index.txt"
-readdb=
+readdb="/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/index/GM12878.readname_to_filename.txt"
 regbed="/dilithium/Data/Nanopore/projects/nomeseq/analysis/annotations/gm12878/GM12878_CTCF_hg38.center.2000bp.bed"
 regname="ctcf_2kb"
 
@@ -32,13 +33,13 @@ if [ "$1" == "subset" ];then
   if [ "$2" == "bam" ];then
     samtools view -hb $bam -L $regbed > $regbam
     samtools index $regbam
+    samtools view $regbam | cut -f1 > $names
   fi
-  cut -f1 $regbam > $names
   if [ "$2" == "fastq" ];then
     python ../../util/fqsubset.py -i $fq -n $names -o $regfq
   fi
   if [ "$2" == "fast5" ];then
-    grep -f "$names" $readdb | awk 'BEGIN{FS="/"}{ print $NF }'> $fnames
+    python -u ../../util/rname_to_fname.py -v -r $names -i $readdb > $fnames
     python ../../util/s3_cp.py -v -b "timp.nanonome" -d "fast5/gm12878" -s $s3idx -i $fnames -o $f5dir
   fi
   if [ "$2" == "meth" ];then
