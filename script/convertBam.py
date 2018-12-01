@@ -129,7 +129,7 @@ def change_sequence(bam,methread,mod="cpg") :
         seq = np.array(list(bam.query_sequence.replace("GC",dinuc)))
 #    seq[gsites-offset] = g
     # methylated
-    meth = calls[np.where(calls[:,0]==1),0]+offset
+    meth = calls[np.where(calls[:,1]==1),0]+offset
     seq[np.isin(pos,meth)] = m
     # unmethylated
     meth = calls[np.where(calls[:,1]==0),0]+offset
@@ -146,7 +146,8 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("reading {} from cpg data".format(window),file=sys.stderr)
     cpg_dict = read_tabix(cpgpath,window)
     if verbose : print("reading {} from gpc data".format(window),file=sys.stderr)
-    gpc_dict = read_tabix(gpcpath,window)
+    try: gpc_dict = read_tabix(gpcpath,window)
+    except TypeError : gpc_dict = cpg_dict # no gpc provided, repace with cpg for quick fix
     if verbose : print("converting bams in {}".format(window),file=sys.stderr)
     i = 0
     for qname in bam_dict.keys() :
