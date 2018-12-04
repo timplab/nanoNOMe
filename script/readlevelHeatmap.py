@@ -86,17 +86,23 @@ class HeatmapRegion :
             for y in methind :
                 yind = methind.index(y)
                 for x in methind[0:yind] :
-                    self.matrix[y,x]-=1
+                    self.matrix[y,x]+=1
             for y in unmethind :
                 yind = unmethind.index(y)
                 for x in unmethind[yind+1:] :
                     self.matrix[y,x]+=1
+        # resolve coverage
+        cov_idx = np.nonzero(self.coverage)[0]
+        for y in cov_idx :
+            for x in cov_idx :
+                if self.matrix[y,x] == 0 :
+                    self.matrix[y,x] = 0.1
         return 
     def plot(self,thr,window) :
         # title
         try :
             name=self.name
-        except NameError :
+        except AttributeError :
             name=self.id
         title="{} {}:{}-{} ({})".format(name,
                 self.chrom,
@@ -117,39 +123,31 @@ class HeatmapRegion :
         df_all['newx'] = (df_all['x']+df_all['y'])/2
         df_all['newy'] = (df_all['y']-df_all['x'])/2
         # split meth vs unmeth and normalize by max count
-        df_meth = df_all.loc[df_all['z']<0]
-        df_meth['z'] = df_meth['z']/np.min(df_meth['z'])
-        df_unmeth = df_all.loc[df_all['z']>0]
+        df_meth = df_all.loc[df_all['y']>df_all['x']]
+        df_meth['z'] = df_meth['z']/np.max(df_meth['z'])
+        df_unmeth = df_all.loc[df_all['y']<df_all['x']]
         df_unmeth['z'] = df_unmeth['z']/np.max(df_unmeth['z'])
-        # filter out low values
-        thr = 0.25
-        df_meth = df_meth.loc[df_meth['z']>=thr]
-        df_unmeth = df_unmeth.loc[df_unmeth['z']>=thr]
-        df_unmeth['newy'] = -df_unmeth['newy']
+        # filter out non data points
+        df_meth = df_meth.loc[df_meth['z']>0]
+        df_unmeth = df_unmeth.loc[df_unmeth['z']>0]
+        df_unmeth['newy'] = -df_unmeth['newy'] # flip y axis for unmeth matrix
         # label and merge
         df_meth['lab'] = 'Methylation'
         df_unmeth['lab'] = 'Unmethylation'
         df = df_meth.append(df_unmeth)
-        df['z'] = 1-df['z'] # flip scale for fill color
+#        df['z'] = 1-df['z'] # flip scale for fill color
         if(len(df) == 0) : return
-        # diagnoal : any point that had any read
-        cov_idx = np.nonzero(self.coverage)[0]
-        cov_array = np.array(self.dist)[cov_idx]
-        df_cov = pd.DataFrame(cov_array,columns=['x'])
-        df_cov['y'] = 0
         # ggplot
         g = (ggplot(df) +
                 facet_grid(['lab','.'])+
                 geom_tile(aes(x='newx',y='newy',fill='z'),size=0.1) +
                 lims(x=(dist_min,dist_max),
                     y=(0,ymax)) +
-                scale_fill_distiller(type='div',palette="Spectral",
+                scale_fill_distiller(type='seq',palette="YlOrRd",
                     limits=(0,1),
                     breaks=(0,1),
-                    labels=('High','Low'),
+                    labels=('Low','High'),
                     name="Co-occurrence") +
-                geom_rug(inherit_aes=False,data=df_cov,
-                    mapping=aes(x='x'),sides='b',size=0.5,alpha=0.5)+
                 labs(x="Distance to center",y=None,title=title) +
                 theme_bw() +
                 theme(panel_grid=element_blank(),
