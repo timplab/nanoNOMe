@@ -226,4 +226,32 @@ bin_pairwise_methylation <- function(data,bin_number=75,saturation_quantile=0.9)
     hist
 }
 
+# bsseq
+mfreqToBsseq <- function(data,pd,label="samp",fill=0){
+    # rename to make compatible
+    names(data)[which(names(data)==label)]="sample"
+    # make matrices
+    dat.meth = data %>%
+        select(chrom,start,strand,meth,sample)%>%
+        spread(key=sample,value=meth)
+    dat.cov = data %>%
+        select(chrom,start,strand,cov,sample)%>%
+        spread(key=sample,value=cov)
+    meth.mat = as.matrix(dat.meth[,pd$samp])
+    cov.mat = as.matrix(dat.cov[,pd$samp])
+    # replace NA
+    naind = which(is.na(cov.mat))
+    cov.mat[naind] = fill
+    meth.mat[naind] = fill
+    # assert same coords and make granges objecte
+    stopifnot(all.equal(dat.meth[,c("chrom","start","strand")],
+                        dat.cov[,c("chrom","start","strand")]))
+    # load into bsseq
+    bismark = BSseq(chr = dat.cov$chrom,
+                    pos = dat.cov$start,
+                    M = meth.mat,
+                    Cov = cov.mat,
+                    pData = pd)
+    bismark
+}
 
