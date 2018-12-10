@@ -260,6 +260,17 @@ fi
 #         interesting chromatin pattern
 #
 ############################################################
+if [[ $STEP =~ all|step4|breastcancer_expression ]];then
+  echo "bresat cancer sample expression comparisons"
+#  Rscript $CODEROOT/bcan/181031_bcan_rnaseq.R $ROOT 2> /dev/null
+  echo "igv"
+#  $CODEROOT/bcan/bcan_igv_plotting.sh $ROOT MCF7
+#  $CODEROOT/bcan/bcan_igv_plotting.sh $ROOT MDAMB231
+  echo "co-occurrence"
+  $CODEROOT/bcan/bcan_heatmap.sh $ROOT MCF7
+  $CODEROOT/bcan/bcan_heatmap.sh $ROOT MDAMB231
+
+fi
 
 if [[ $STEP =~ all|step4|sv ]];then
   echo "bresat cancer sample sv comparisons"

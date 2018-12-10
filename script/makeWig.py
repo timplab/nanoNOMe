@@ -22,7 +22,7 @@ def parseArgs() :
     parser.add_argument('-v','--verbose', action='store_true',default=False,
             help="verbose output")
     parser.add_argument('-i','--input',type=str,required=False,default="stdin",
-            help="input file (either methylation freq or methylation bed, default stdin)")
+            help="input file (methylation freq, default stdin)")
     parser.add_argument('-o','--output',type=argparse.FileType('w'),required=False, 
             default=sys.stdout,help="output file (default stout)")
     parser.add_argument('-t','--threshold',type=int,required=False,

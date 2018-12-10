@@ -11,6 +11,7 @@ import numpy as np
 methylCall = namedtuple('methylCall', ['pos','call','ratio','seq'])
 class MethRead :
     def __init__(self,string):
+        self.string=string
         self.fields=string.strip().split("\t")
         self.rname=self.fields[0]
         self.start=int(self.fields[1])

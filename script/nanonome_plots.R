@@ -25,6 +25,7 @@ parse_mfreq = function(argsin){
 metaplotByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win,cores=1){
     db.center = resize(shift(db.gr,shift=width(db.gr)/2),width=1,ignore.strand=T)
     dat.list=list(cpg.tb,gpc.tb)
+
     dat.ag=mclapply(mc.cores=cores,dat.list,function(x){
         x.filt=x%>%filter(trinuc != "CCG")
         x.dist=x.filt%>%
@@ -107,7 +108,7 @@ heatmapByDistance <- function(cpg.tb,gpc.tb,db.gr,plotpath,win){
     dev.off()
 }
 
-test="metaplotByDistance,-c,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.cpg.methfreq.txt.gz,-g,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.gpc.methfreq.txt.gz,-r,/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/ctcf/GM12878_CTCF.2kb.bed,-o,/dilithium/Data/Nanopore/projects/nomeseq/analysis/plots/aggregate/GM12878.ctcf.aggregate.pdf"
+test="metaplotByDistance,-c,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.cpg.methfreq.txt.gz,-g,/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq_all/GM12878.gpc.methfreq.txt.gz,-r,/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/ctcf/GM12878_CTCF.2kb.bed,-o,/dilithium/Data/Nanopore/projects/nomeseq/analysis/plots/aggregate/tmp.pdf"
 argsin=strsplit(test,",")[[1]]
 if (! interactive()){
     modules=c("metaplotByDistance","heatmapByDistance")

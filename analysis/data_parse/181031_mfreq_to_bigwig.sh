@@ -7,6 +7,7 @@ parser=../../script/makeWig.py
 log=$wigdir/makewig.log
 samps="GM12878 MCF10A MCF7 MDAMB231"
 samps="GM12878_wgs"
+samps="GM12878_BSseq_1"
 
 for samp in $samps; do
   for mod in cpg gpc; do

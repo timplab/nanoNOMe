@@ -10,7 +10,7 @@ if [ "$1" == "dl" ];then
 fi
 bed18=$annodir/CTCFBSDB_allcomp_hg18.bed
 if [ "$1" == "bed" ];then
-  gunzip -c $all | cut -f3 |\
+  gunzip -c $all | awk '{OFS="\t"}$2=="Human"{ $2=$2-1; print $1,$2,$3,".",".","." }' | cut -f3 |\
     tr ":" "\t" | tr "-" "\t" |\
     awk '{OFS="\t"}NR>1{ $2=$2-1; print $1,$2,$3,".",".","." }' > $bed18
 fi

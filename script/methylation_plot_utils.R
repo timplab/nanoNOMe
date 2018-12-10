@@ -171,8 +171,9 @@ getDistance <- function(query,subject){
                                start(query)-start.feature))
     dist.tb
 }
-calculate_rollmean <- function(dat.tb,rollrange,win){
+calculate_rollmean <- function(dat.tb,rollrange=NULL,win=50){
     rollmeans=numeric()
+    tbout = FALSE
     if (! "dist" %in% names(dat.tb)) {
         if ("start" %in% names(dat.tb)) {
               dat.tb= dat.tb%>%
@@ -181,6 +182,11 @@ calculate_rollmean <- function(dat.tb,rollrange,win){
               dat.tb= dat.dst %>%
                 mutate(dist=pos)
         }
+    }
+    if (is.null(rollrange)) {
+        rollrange=seq(from=min(dat.tb$dist)+win,
+                       to=max(dat.tb$dist)-win,by=1)
+        tbout = TRUE
     }
     for ( center in rollrange ){
         dat.win=dat.tb[which(dat.tb$dist >= center-win &
@@ -191,7 +197,11 @@ calculate_rollmean <- function(dat.tb,rollrange,win){
 #            (sum(dat.win$totmeth)+sum(dat.win$totunmeth))
         rollmeans=c(rollmeans,rollmean)
     }
-    rollmeans
+    if (tbout){
+        tibble(start=rollrange,freq=rollmeans)
+    }else{
+        rollmeans
+    }
 }
 aggregate_methylation <- function(dat.dist,win=50){
     cat("aggregating and calculating rolling mean\n")

@@ -43,12 +43,19 @@ class BedQuery :
         self.chrom=self.fields[0]
         self.start=int(self.fields[1])
         self.end=int(self.fields[2])
-        self.name=self.fields[3]
-        self.score=self.fields[4]
-        self.strand=self.fields[5]
+        try : 
+            self.name=self.fields[3]
+            self.score=self.fields[4]
+            self.strand=self.fields[5]
+            self.extracols = self.fields[6:]
+        except IndexError :
+            self.name= "."
+            self.score= "."
+            self.strand= "."
+            self.extracols = []
     def update_fields(self) :
         self.fields=[self.chrom,self.start,self.end,
-                self.name,self.score,self.strand]+self.fields[6:]
+                self.name,self.score,self.strand]+self.extracols
     def printbed(self,out) :
         print("\t".join([str(x) for x in self.fields]),file=out)
 

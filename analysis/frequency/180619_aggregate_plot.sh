@@ -8,7 +8,7 @@ root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
 freqdir=$root/pooled/methylation/mfreq_all
 plotdir=$root/plots/aggregate
 plotter=$srcdir/../../script/nanonome_plots.R
-dbpath="$root/database/gm12878/ctcf/GM12878_CTCF.2kb.bed" #default CTCF
+#dbpath="$root/database/gm12878/ctcf/GM12878_CTCF.2kb.bed" #default CTCF
 if [ "$2" == "ctcf" ];then
   echo "CTCF"
 elif [ "$2" == "tss" ];then
@@ -17,6 +17,8 @@ elif [ "$2" == "cgitss" ];then
   dbpath=/mithril/Data/NGS/Reference/human_annotations/hg38.91.TSS.2kb.CGI.bed
 elif [ "$2" == "dnase" ];then
   dbpath="/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/dnase/GM12878_dnase.2kbregion.bed"
+elif [ "$2" == "ctcf_ctcfbsdb_allcomp" ];then
+  dbpath="$root/database/gm12878/ctcf/GM12878_CTCF_ctcfbsdb_allcomp.center.noTSS.bed" 
 fi
 
 
@@ -25,5 +27,5 @@ for cell in $cells;do
   gpc=$freqdir/$cell.gpc.methfreq.txt.gz
   plotpath=$plotdir/$cell.$1.aggregate.pdf
 
-  Rscript $plotter aggregateByDistance -c $cpg -g $gpc -r $dbpath -o $plotpath 
+  Rscript $plotter metaplotByDistance -c $cpg -g $gpc -r $dbpath -o $plotpath 
 done

@@ -32,8 +32,8 @@ def parseArgs():
             default="heatmap.pdf",help="output file path (default heatmap.pdf)")
     parser.add_argument('-w','--window',type=int,required=False,default=20,
             help="binning window for calculating methylation")
-    parser.add_argument('-f','--frequency',type=float,required=False,default=0.1,
-            help="frequency threshold")
+    parser.add_argument('-c','--coverage',type=int,required=False,default=10,
+            help="upper limit on number to be displayed as the darkest pixel")
     args = parser.parse_args()
     try : 
         args.out
@@ -50,8 +50,6 @@ class HeatmapRegion :
         self.id = self.regfields[3]
         if len(self.regfields) > 6 :
             self.name = self.regfields[6]
-        else :
-            self.name = self.id
         self.center = self.start + np.floor((self.end-self.start)/2)
         self.metharrays=[]
         self.totreads=0
@@ -102,7 +100,11 @@ class HeatmapRegion :
         return 
     def plot(self,thr,window) :
         # title
-        title="{} {}:{}-{} ({})".format(self.name,
+        try :
+            name=self.name
+        except AttributeError :
+            name=self.id
+        title="{} {}:{}-{} ({})".format(name,
                 self.chrom,
                 self.start,
                 self.end,
@@ -120,20 +122,15 @@ class HeatmapRegion :
         # rotate graph
         df_all['newx'] = (df_all['x']+df_all['y'])/2
         df_all['newy'] = (df_all['y']-df_all['x'])/2
-        # split meth vs unmeth
+        # split meth vs unmeth and normalize by max count
         df_meth = df_all.loc[df_all['y']>df_all['x']]
+        df_meth['z'] = df_meth['z']/np.max(df_meth['z'])
         df_unmeth = df_all.loc[df_all['y']<df_all['x']]
+        df_unmeth['z'] = df_unmeth['z']/np.max(df_unmeth['z'])
         # filter out non data points
         df_meth = df_meth.loc[df_meth['z']>0]
         df_unmeth = df_unmeth.loc[df_unmeth['z']>0]
-        # normalize by max count
-        df_meth['z'] = df_meth['z']/np.max(df_meth['z'])
-        df_unmeth['z'] = df_unmeth['z']/np.max(df_unmeth['z'])
-        # thresholding
-        df_meth['z'][df_meth['z']<thr] = 0
-        df_unmeth['z'][df_unmeth['z']<thr] = 0
-        # flip y axis for unmeth matrix
-        df_unmeth['newy'] = -df_unmeth['newy']
+        df_unmeth['newy'] = -df_unmeth['newy'] # flip y axis for unmeth matrix
         # label and merge
         df_meth['lab'] = 'Methylation'
         df_unmeth['lab'] = 'Unmethylation'
@@ -180,7 +177,7 @@ class HeatmapRegion :
 def makekey(region):
     return ".".join([str(x) for x in region.items])
 
-def readlevelHeatmap(datapath,reg,thr=0.1,window=10,verbose=False) :
+def readlevelHeatmap(datapath,reg,thr=5,window=10,verbose=False) :
     heat = HeatmapRegion(reg)
     if verbose : print(heat.coord,file=sys.stderr)
     data = tabix(datapath,heat.coord)
@@ -192,6 +189,7 @@ def readlevelHeatmap(datapath,reg,thr=0.1,window=10,verbose=False) :
     if verbose : 
         print("{} reads covering the entire region out of total {} in the region".format(
             heat.totreads,len(data)),file=sys.stderr)
+    if heat.totreads < thr : return
     heat.makeMatrix(window)
     g = heat.plot(thr,window)
     if verbose : print(heat.name,file=sys.stderr)
@@ -201,7 +199,7 @@ if __name__=="__main__":
     args=parseArgs()
     glist = list()
     for reg in args.regions :
-        g = readlevelHeatmap(args.input,reg,args.frequency,args.window,args.verbose)
+        g = readlevelHeatmap(args.input,reg,args.coverage,args.window,args.verbose)
         if g is not None : 
             glist.append(g)
     if args.verbose : print("generating plots",file=sys.stderr)

@@ -1,0 +1,155 @@
+#!/usr/bin/Rscript
+library(getopt)
+srcdir=dirname(get_Rscript_filename())
+if (is.na(srcdir)){ srcdir="." }
+library(tidyverse)
+library(GenomicRanges)
+library(VariantAnnotation)
+source(file.path(srcdir,"../../script/methylation_plot_utils.R"))
+
+cores=detectCores()
+parser="../../script/SVmethylation.py"
+root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
+datroot=file.path(root,"pooled/methylation/mfreq_all")
+plotdir=file.path(root,"plots/sv")
+cells=c("GM12878","MCF10A","MCF7","MDAMB231")
+pd = tibble(cell=rep(cells,each=2),
+            calltype=rep(c("cpg","gpc"),4),
+            filepath=file.path(datroot,
+                               paste(cell,calltype,"methfreq.txt.gz",
+                                     sep=".")))
+
+svpath=file.path(root,"pooled/sv/merged_SURVIVOR_1kbp_typesafe_10_31_2018.sort.anno.vcf.gz")
+
+
+# fix contigs if necessary
+fixcontigs <- function(granges){
+    contigs=seqlevels(granges)
+    if (! grepl("chr",contigs[1])){
+        contigs.fix = paste0('chr',contigs)
+        contigs.fix[match("chrMT",contigs.fix)] = "chrM"
+        seqlevels(granges)=contigs.fix
+    }
+    granges
+}
+getEndCoord <- function(vcf){
+    GRanges(info(vcf)$CHR2,
+            IRanges(start=info(vcf)$END,end=info(vcf)$END))
+}
+genocoTogranges <- function(coords){
+    coords.list = strsplit(coords,"-")
+    bp1 = sapply(coords.list,"[[",1)
+    bp1.tb = as.tibble(do.call(rbind,strsplit(bp1,"_"))) %>% type_convert()
+    bp1.gr = fixcontigs(GRanges(bp1.tb$V1,IRanges(bp1.tb$V2,bp1.tb$V2)))
+    bp2 = sapply(coords.list,"[[",2)
+    bp2.tb = as.tibble(do.call(rbind,strsplit(bp2,"_"))) %>% type_convert()
+    bp2.gr = fixcontigs(GRanges(bp2.tb$V1,IRanges(bp2.tb$V2,bp2.tb$V2)))
+    bp1.gr$bp=1;bp2.gr$bp=2
+    list(bp1.gr,bp2.gr)
+}
+makeGenoCo <- function(vcf){
+    bp1 = rowRanges(vcf)
+    bp2 = getEndCoord(vcf)
+    paste(sep="-",
+          paste(seqnames(bp1),start(bp1),sep="_"),
+          paste(seqnames(bp2),start(bp2),sep="_"))
+}
+
+    
+vcf = readVcf(svpath,"hg38")
+vcf.tb = read_tsv(svpath,comment="##")
+
+vcf.del = vcf[info(vcf)$SVTYPE=="DEL"]
+combos = tibble(one=c("MCF10A","MCF10A"),
+                two=c("MCF7","MDAMB231"),
+                ind=c(10,12))
+# all possible combinations of supp vec
+require(gtools)
+perm = as.tibble(permutations(2,3,c(0,1),repeats.allowed=T)) %>%
+    transmute(perm=paste0(V1,V2,V3))
+perm=perm$perm
+sup7 = tibble(front=rep(c("100","101"),length(perm)),back=rep(perm,each=2)) %>%
+    transmute(vec=paste0(front,back))
+sup7=as.numeric(sup7$vec)
+sup231 = tibble(front=rep(c("001","101"),length(perm)),back=rep(perm,each=2)) %>%
+    transmute(vec=paste0(front,back))
+sup231=as.numeric(sup231$vec)
+
+sup.list = list(sup7,sup231)
+suppvec = info(vcf)$SUPP_VEC
+
+window=500
+
+plotpath = file.path(plotdir,"bcan_hom_DEL_bp1_vs_bp2_frequency_delta_comparison.pdf")
+pdf(plotpath,useDingbats=F,width=3,height=3)
+i = 1
+for (i in seq(dim(combos)[1])){
+    # DE genes
+    genes.fp = file.path(root,"annotations/breastcancer",paste0("MCF10A_vs_",combos$two[i],"_genes.bed"))
+    genes = read_tsv(genes.fp) %>%
+        dplyr::rename(chrom=`#chrom`)
+    genes.gr = GRanges(genes)
+
+    del.idx = which((info(vcf)$SUPP_VEC %in% sup.list[[i]])&
+                    (info(vcf)$SVTYPE == "DEL")) # only dels with these SUPP vecs
+    vcf.del = vcf[del.idx]
+    vcftb.del = vcf.tb[del.idx,]
+    geno = sapply(strsplit(unlist(vcftb.del[,combos$ind[i]]),":"),"[[",1)
+    hom.idx = which(geno=="1/1") # filtering for hom dels only
+    vcf.del=vcf.del[hom.idx]
+
+    # get coords of dels
+    endcoord = as.tibble(info(vcf.del)[,c("CHR2","END")])
+    coord.tb = bind_cols(as.tibble(rowRanges(vcf.del))[,c("seqnames","start")],
+                         endcoord) %>%
+        filter(seqnames==CHR2) %>%
+        dplyr::select(seqnames,start,end=END)
+    del.gr = GRanges(coord.tb)
+    del.gr = del.gr[which(width(del.gr)>1000)] # filtering <1kb dels
+    del.gr = fixcontigs(del.gr)
+    bp1.gr = flank(del.gr,width=window) # bp1 5'
+    bp2.gr = flank(del.gr,start=F,width=window) # bp2 3'
+    bp.list = list(bp1.gr,bp2.gr)
+
+    # read in methylation
+    pd.sub = pd[rep(which(pd$cell %in% c(combos$one[i],combos$two[i])),2),] %>%
+        mutate(bp=rep(c(1,2),each=4))
+    meth.list = mclapply(mc.cores=8,seq(dim(pd.sub)[1]),function(i){
+        reg=bp.list[[pd.sub$bp[i]]]
+        meth=tabix_mfreq(pd.sub$filepath[i],reg)
+        getRegionMeth(meth,reg)%>%
+            mutate(cell=pd.sub$cell[i],
+                   calltype=pd.sub$calltype[i],
+                   bp=pd.sub$bp[i])
+    })
+    meth = do.call(rbind,meth.list)
+    
+    # compare deltas b/w MCF10A (no del) vs sample (del)
+    meth.del = meth %>% dplyr::select(-numsites,-totcov) %>%
+        spread(bp,freq) %>% na.omit() %>%
+        mutate(del=`2`-`1`) %>%
+        dplyr::select(-`1`,-`2`) %>%
+        spread(cell,del) %>%na.omit()
+    names(meth.del) = c(names(meth.del)[1:2],"one","two")
+
+    makeplot = function(x){
+        lim = max(abs(c(x$one,x$two)))
+        g = ggplot(x,aes(x=one,y=two))+
+            lims(x=c(-lim,lim),y=c(-lim,lim))+
+            geom_point()+
+            theme_bw()+
+            theme(legend.position="bottom",
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  axis.text = element_text(color="black"))+
+            ggtitle(paste(combos$one[i],"vs",combos$two[i],x$calltype[1]))
+        g
+    }
+        
+    # scatter
+    g.cpg = makeplot(meth.del[which(meth.del$calltype=="cpg"),])
+    g.gpc = makeplot(meth.del[which(meth.del$calltype=="gpc"),])
+    print(g.cpg)
+    print(g.gpc)
+}
+dev.off()
