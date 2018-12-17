@@ -84,6 +84,9 @@ dat.spread = bind_cols(dat.spread,
 
 plotter <- function(dat.plt,plotpath) {
     # plot
+    dat.plt = dat.plt %>% ungroup() %>%
+        mutate(qtile=ifelse(qtile==2,1,qtile),
+               qtile=ifelse(qtile==3,4,qtile))
     g = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
         facet_wrap(~qtile)+lims(x=c(0,1),y=c(0,1))+
         theme(panel.grid.major = element_blank(),
@@ -97,6 +100,7 @@ plotter <- function(dat.plt,plotpath) {
     # scatter plot
     g.scatter = g + geom_point(size=0.2,alpha=0.5) +
         geom_rug(size=0.1,alpha=0.5)
+    g.2d = g + stat_density_2d(aes(fill=..level..),geom="polygon")
     # heatmap
     hist = bin_pairwise_methylation(dat.plt)
     g.heat = g +
@@ -125,8 +129,10 @@ plotter <- function(dat.plt,plotpath) {
         labs(y="Density",x="Methylation frequency",
              title="Methylation density by expression")
     # print
-    pdf(plotpath,useDingbats=F,height=3,width=3)
+    pdf(plotpath,useDingbats=F,height=3,width=6)
     print(g.one)
+    print(g.2d)
+    print(g.density)
     print(g.scatter)
     print(g.heat)
 #    print(g.density)

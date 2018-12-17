@@ -262,7 +262,7 @@ fi
 ############################################################
 if [[ $STEP =~ all|step4|breastcancer_expression ]];then
   echo "bresat cancer sample expression comparisons"
-#  Rscript $CODEROOT/bcan/181031_bcan_rnaseq.R $ROOT 2> /dev/null
+#  Rscript $CODEROOT/bcan/181031_bcan_rnaseq.R $ROOT 3> /dev/null
   echo "igv"
 #  $CODEROOT/bcan/bcan_igv_plotting.sh $ROOT MCF7
 #  $CODEROOT/bcan/bcan_igv_plotting.sh $ROOT MDAMB231

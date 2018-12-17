@@ -31,6 +31,7 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             # input region is a GRanges object
             if (verbose) cat(paste0("reading regions defined by GRanges object",
                                     " in ",querypath,"\n"))
+            strand(dbpath) = "*"
             regions = gsub(":.,","",toString(dbpath))
             command = paste("tabix",querypath,regions)
         } else {
