@@ -142,8 +142,8 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("reading {} from bam file".format(window),file=sys.stderr)
     with pysam.AlignmentFile(bampath,"rb") as bam :
         bam_entries = [x for x in bam.fetch(region=window)]
-    bam_dict = dict((x.query_name,x) for x in bam_entries)
     if verbose : print("{} reads in {}".format(len(bam_entries),window),file=sys.stderr)
+    if len(bam_entries) == 0 : return
     if verbose : print("reading {} from cpg data".format(window),file=sys.stderr)
     cpg_dict = read_tabix(cpgpath,window)
     if verbose : print("reading {} from gpc data".format(window),file=sys.stderr)
