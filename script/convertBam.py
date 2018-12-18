@@ -88,7 +88,7 @@ def convert_cpg(bam,cpg,gpc) :
 
 def convert_nome(bam,cpg,gpc) :
     # cpg and gpc
-    bam_cpg = change_sequence(bam,cpg,"cpg")
+    bam_cpg = change_sequence(bam,cpg,"cpg") 
     return change_sequence(bam_cpg,gpc,"gpc")
 
 def reset_bam(bam) :
@@ -143,6 +143,7 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     with pysam.AlignmentFile(bampath,"rb") as bam :
         bam_entries = [x for x in bam.fetch(region=window)]
     bam_dict = dict((x.query_name,x) for x in bam_entries)
+    if verbose : print("{} reads in {}".format(len(bam_entries),window),file=sys.stderr)
     if verbose : print("reading {} from cpg data".format(window),file=sys.stderr)
     cpg_dict = read_tabix(cpgpath,window)
     if verbose : print("reading {} from gpc data".format(window),file=sys.stderr)
@@ -150,18 +151,18 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     except TypeError : gpc_dict = cpg_dict # no gpc provided, repace with cpg for quick fix
     if verbose : print("converting bams in {}".format(window),file=sys.stderr)
     i = 0
-    for qname in bam_dict.keys() :
+    for bam in bam_entries :
+        qname = bam.query_name
         try :
             cpg = cpg_dict[qname]
             gpc = gpc_dict[qname]
         except KeyError : 
             continue
         i += 1
-        bam = reset_bam(bam_dict[qname])
-        newbam = cfunc(bam,cpg,gpc)
-        q.put(newbam.to_string())
+        newbam = reset_bam(bam)
+        convertedbam = cfunc(newbam,cpg,gpc)
+        q.put(convertedbam.to_string())
     if verbose : print("converted {} bam entries in {}".format(i,window),file=sys.stderr)
-    
 
 def main() :
     args=parseArgs()
