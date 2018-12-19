@@ -44,7 +44,13 @@ def read_tabix(fpath,window) :
     with pysam.TabixFile(fpath) as tabix :
         entries = [x for x in tabix.fetch(window)]
     reads = [MethRead(x) for x in entries]
-    rdict = dict((x.qname,x) for x in reads)
+    rdict = dict()
+    for meth in reads :
+        qname = meth.qname
+        if qname in rdict.keys() :
+            rdict[qname] = np.append(rdict[qname],meth.callarray,0)
+        else : 
+            rdict[qname] = meth.callarray
     return rdict
 
 # https://stackoverflow.com/questions/13446445/python-multiprocessing-safely-writing-to-a-file
@@ -97,14 +103,13 @@ def reset_bam(bam) :
     except ValueError :
         # MD tag not present probably means bam already fed through nanopolish phase-read
         refseq = bam.query_alignment_sequence
-    bam.query_sequence = refseq
+    bam.query_sequence = refseq.upper()
     bam.cigarstring = ''.join([str(len(refseq)),"M"])
     return bam
 
-def change_sequence(bam,methread,mod="cpg") :
+def change_sequence(bam,calls,mod="cpg") :
     start = bam.reference_start
     pos = bam.get_reference_positions(True)
-    calls = methread.callarray
     if bam.is_reverse == True : 
         if mod == "cpg" :
             offset=1
@@ -145,17 +150,17 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("{} reads in {}".format(len(bam_entries),window),file=sys.stderr)
     if len(bam_entries) == 0 : return
     if verbose : print("reading {} from cpg data".format(window),file=sys.stderr)
-    cpg_dict = read_tabix(cpgpath,window)
+    cpg_calldict = read_tabix(cpgpath,window)
     if verbose : print("reading {} from gpc data".format(window),file=sys.stderr)
-    try: gpc_dict = read_tabix(gpcpath,window)
-    except TypeError : gpc_dict = cpg_dict # no gpc provided, repace with cpg for quick fix
+    try: gpc_calldict = read_tabix(gpcpath,window)
+    except TypeError : gpc_calldict = cpg_calldict # no gpc provided, repace with cpg for quick fix
     if verbose : print("converting bams in {}".format(window),file=sys.stderr)
     i = 0
     for bam in bam_entries :
         qname = bam.query_name
         try :
-            cpg = cpg_dict[qname]
-            gpc = gpc_dict[qname]
+            cpg = cpg_calldict[qname]
+            gpc = gpc_calldict[qname]
         except KeyError : 
             continue
         i += 1
