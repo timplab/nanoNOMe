@@ -12,6 +12,8 @@ def parseArgs():
     parser.add_argument('-e', '--exclude',type=str,required=False,help="motif to exclude from reporting")
     parser.add_argument('-w', '--window',type=int,required=False,default=2,
             help="number of nucleotides to report on either side of called nucleotide")
+    parser.add_argument('--nome',action="store_true",required=False,default=False,
+            help="nanoNOMe - remove calls at GCG motifs")
     parser.add_argument('--offset',type=int,required=False,default=0,
             help="nanopolish coordinate offset (1-based)")
     args = parser.parse_args()
@@ -19,11 +21,12 @@ def parseArgs():
     return args
 
 class readQuery:
-    def __init__(self,record,thr,motif,offset,win_size):
+    def __init__(self,record,thr,motif,offset,win_size,nome):
         self.thr = thr
         self.motif = motif
         self.offset = offset
         self.win_size = win_size
+        self.nome = nome
         self.qname = record['read_name']
         self.rname = record['chromosome']
         self.strand = record['strand']
@@ -44,10 +47,12 @@ class readQuery:
         seq_list = []
         # read groups
         while pos != -1 :
-            pos_list.append(pos)
-            self.ratio.append(llr)
-            self.call.append(call)
-            seq_list.append(sequence[pos-self.win_size:pos+self.win_size+1])
+            seq = sequence[pos-self.win_size:pos+self.win_size+1]
+            if not self.nome or "GCG" not in seq:
+                pos_list.append(pos)
+                self.ratio.append(llr)
+                self.call.append(call)
+                seq_list.append(seq)
             pos = sequence.find(self.motif,pos+1)
         coord_list = [ x+start-pos_list[0] for x in pos_list ]
         # get distance (CIGAR style)
@@ -104,12 +109,12 @@ def summarizeMeth(args):
                     (int(record['start']) < read.end)):
                 read.printRead()
                 read = readQuery(record,args.call_threshold,
-                        motif,args.offset,args.window)
+                        motif,args.offset,args.window,args.nome)
             else :
                 read.update(record)
         except NameError : # has not been initialized
             read = readQuery(record,args.call_threshold,
-                    motif,args.offset,args.window)
+                    motif,args.offset,args.window,args.nome)
         except ValueError : # header or otherwise somehow faulty
             continue
     # finishing up - print the unprinted read
