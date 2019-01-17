@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 import sys
+import csv
 import argparse
 
 def parseArgs():
@@ -9,132 +10,111 @@ def parseArgs():
     parser.add_argument('-i', '--input', type=str, required=False,help="input methylation tsv file (default stdin)")
     parser.add_argument('-m', '--mod',type=str,required=False,default='cpg',help="modification motif; one of cpg,gpc")
     parser.add_argument('-e', '--exclude',type=str,required=False,help="motif to exclude from reporting")
-    parser.add_argument('-w', '--window',type=int,required=False,default=1,
+    parser.add_argument('-w', '--window',type=int,required=False,default=2,
             help="number of nucleotides to report on either side of called nucleotide")
-    parser.add_argument('--offset',type=int,required=False,default=1,
+    parser.add_argument('--offset',type=int,required=False,default=0,
             help="nanopolish coordinate offset (1-based)")
     args = parser.parse_args()
     assert(args.call_threshold is not None)
     return args
 
-class MethQuery:
-    def __init__(self,string,mod,offset):
-        self.fields=string.strip().split("\t")
-        self.rname=self.fields[0]
-        self.mod=mod
-        if mod=="cpg" :
-            self.start=int(self.fields[2])+offset
-            self.motif="CG"
-        elif mod=="gpc" :
-            self.start=int(self.fields[2])+1+offset # offset from methylation calls - 1-based
-            self.motif="GC"
-        self.strand=self.fields[1]
-        self.qname=self.fields[4]
-        self.ratio=float(self.fields[5])
-        self.unmeth=float(self.fields[7])
-        self.recsites=int(self.fields[9])
-        self.seq=self.fields[10][3:]
-    def methcall(self,thr):
-        if abs(self.ratio) < thr :
+class readQuery:
+    def __init__(self,record,thr,motif,offset,win_size):
+        self.thr = thr
+        self.motif = motif
+        self.offset = offset
+        self.win_size = win_size
+        self.qname = record['read_name']
+        self.rname = record['chromosome']
+        self.strand = record['strand']
+        self.start = int(record['start']) + self.offset
+        self.end = self.start + 1
+        self.dist=[]
+        self.seq=[]
+        self.ratio=[]
+        self.call=[]
+        self.update(record)
+    def update(self,record):
+        llr=float(record['log_lik_ratio'])
+        call=self.call_methylation(llr) # call methylation
+        start = int(record['start']) + self.offset
+        sequence = record['sequence']
+        pos = sequence.find(self.motif)
+        pos_list = []
+        seq_list = []
+        # read groups
+        while pos != -1 :
+            pos_list.append(pos)
+            self.ratio.append(llr)
+            self.call.append(call)
+            seq_list.append(sequence[pos-self.win_size:pos+self.win_size+1])
+            pos = sequence.find(self.motif,pos+1)
+        coord_list = [ x+start-pos_list[0] for x in pos_list ]
+        # get distance (CIGAR style)
+        dist_list = [ x-y for x,y in 
+                zip(coord_list,[self.end-1]+coord_list) ]
+        # update 
+        self.end = coord_list[-1] + 1
+        self.seq = self.seq + seq_list
+        self.dist = self.dist + dist_list
+    def call_methylation(self,llr):
+        if abs(llr) < self.thr :
             call="x"
-        elif self.ratio > 0 :
+        elif llr > 0 :
             call="m"
         else : 
             call="u"
         return call
-    def parse(self,motif,window):
-        pos=[]
-        seqs=[]
-        newpos=self.seq.find(motif)
-        while newpos != -1:
-            seq=self.seq[newpos-window:newpos+window+2]
-            pos.append(newpos)
-            seqs.append(seq)
-            newpos=self.seq.find(motif,newpos+1)
-        coord=[x-y for x,y in zip(pos,[5]+pos)]
-        return coord,seqs
-
-class readQuery:
-    def __init__(self,query,args):
-        self.qname=query.qname
-        self.rname=query.rname
-        self.start=query.start
-        self.end=query.start
-        self.strand=query.strand
-        self.dist=[]
-        self.seq=[]
-        self.ratio=[]
-        self.unmeth=[]
-        self.call=[]
-        self.mod=args.mod
-        self.motif=query.motif
-        self.thr=args.call_threshold
-        self.window=args.window
-        self.update(query)
-
-    def update(self,query):
-        dists,seqs=query.parse(self.motif,self.window)
-        dists[0]=query.start-self.end
-        self.dist=self.dist+dists
-        self.end=self.start+sum(self.dist)
-        self.seq=self.seq+seqs
-        call=query.methcall(self.thr)
-        for i in range(query.recsites):
-            self.ratio.append(query.ratio)
-            self.unmeth.append(query.unmeth) 
-            self.call.append(call)
-
     def summarizeCall(self):
         summary=""
         for ind,call in zip(self.dist,self.call):
             summary=summary+"{}{}".format(ind,call)
         return summary
-    def concatenateCall(self):
-        summary=""
-        for ind,call in zip(self.dist,self.call) :
-            summary=summary+(ind-1)*"."+call
-        return summary
-
-def catList(strlist,delim=""):
-    return delim.join([str(x) for x in strlist])
-
-def PrintRead(read):
-    print("\t".join([read.rname,str(read.start-1),str(read.end),
-        read.qname,
-        read.summarizeCall(),
-        catList(read.ratio,","),
-        catList(read.seq,",")]))
+    def printRead(self):
+        def catList(strlist,delim=""):
+            return delim.join([str(x) for x in strlist])
+        print("\t".join([self.rname,str(self.start),str(self.end),
+            self.qname,
+            self.summarizeCall(),
+            catList(self.ratio,","),
+            catList(self.seq,",")]))
 
 def summarizeMeth(args):
+    # motif and offset based on modification
+    if args.mod=="cpg" :
+        motif="CG"
+    elif args.mod=="gpc" :
+        args.offset += 1  # coordinate of C is +1 since G comes before C
+        motif="GC"
+    # read in data
     if args.input:
         in_fh = open(args.input)
     else:
         in_fh = sys.stdin
-    for line in in_fh:
-        try : 
-            # skip headers (in concatenated tsvs) and otherwise faulty entries
-            query=MethQuery(line,args.mod,args.offset)
-        except :
-            continue
-        # skip queries that have a motif in the call group
+    csv_reader = csv.DictReader(in_fh,delimiter='\t')
+    for record in csv_reader:
+        # skip queries that have an undesired motif in the call group
         if args.exclude:
-            if args.exclude in query.seq:
+            if args.exclude in record['sequence'] :
                 continue
         # update query
         try :
-            if ((query.qname != read.qname) or
-                    (query.rname != read.rname) or
-                    (query.start < read.end)):
-                PrintRead(read)
-                read=readQuery(query,args)
-            else : 
-                read.update(query)
-        except :
-            read=readQuery(query,args)
-    try : 
-        PrintRead(read)
-    except :
-        pass
+            if ((record['read_name'] != read.qname) or
+                    (record['chromosome'] != read.rname) or
+                    (int(record['start']) < read.end)):
+                read.printRead()
+                read = readQuery(record,args.call_threshold,
+                        motif,args.offset,args.window)
+            else :
+                read.update(record)
+        except NameError : # has not been initialized
+            read = readQuery(record,args.call_threshold,
+                    motif,args.offset,args.window)
+        except ValueError : # header or otherwise somehow faulty
+            continue
+    # finishing up - print the unprinted read
+    if read.qname : 
+        read.printRead()
     in_fh.close()
 
 if __name__=="__main__":
