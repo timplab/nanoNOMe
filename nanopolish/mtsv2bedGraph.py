@@ -54,6 +54,7 @@ class readQuery:
                 self.call.append(call)
                 seq_list.append(seq)
             pos = sequence.find(self.motif,pos+1)
+        if len(pos_list) == 0 : return
         coord_list = [ x+start-pos_list[0] for x in pos_list ]
         # get distance (CIGAR style)
         dist_list = [ x-y for x,y in 
