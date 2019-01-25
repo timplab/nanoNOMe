@@ -6,13 +6,13 @@ rule mbed_to_mfreq:
 	input:
 		"{dir}/mbed/{sample}.{mod}.meth.bed.gz"
 	params:
-		codedir=config['codedir'],
-		log="{dir}/mfreq/{sample}.{mod}.mfreq.log"
+		config['codedir'],
 	output:
-		"{dir}/mfreq/{sample}.{mod}.mfreq.txt.gz"
+		mfreq="{dir}/mfreq/{sample}.{mod}.mfreq.txt.gz"
+		log="{dir}/mfreq/{sample}.{mod}.mfreq.log"
 	shell:
-		"python -u {params.codedir}/script/parseMethylbed.py frequency -v "
-		"-i {input} -m {wildcards.mod} 2> {params.log}| "
-		"bgzip > {output} && "
-		"tabix -b 2 -e 2 {output}"
+		"python -u {params}/script/parseMethylbed.py frequency -v "
+		"-i {input} -m {wildcards.mod} 2> {output.log}| "
+		"bgzip > {output.mfreq} && "
+		"tabix -b 2 -e 2 {output.mfreq}"
 
