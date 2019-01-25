@@ -37,6 +37,7 @@ class readQuery:
         self.ratio=[]
         self.call=[]
         self.update(record)
+
     def update(self,record):
         llr=float(record['log_lik_ratio'])
         call=self.call_methylation(llr) # call methylation
@@ -78,6 +79,10 @@ class readQuery:
         return summary
     def printRead(self):
         if len(self.call) == 0 : return # after filtering GCG there is no data in this read
+        # if GCG is first motif, adjust start to make first index 0
+        if self.dist[0] != 0 :
+            self.start += self.dist[0]
+            self.dist[0] = 0
         def catList(strlist,delim=""):
             return delim.join([str(x) for x in strlist])
         print("\t".join([self.rname,str(self.start),str(self.end),
