@@ -77,6 +77,7 @@ class readQuery:
             summary=summary+"{}{}".format(ind,call)
         return summary
     def printRead(self):
+        if len(self.call) == 0 : return # after filtering GCG there is no data in this read
         def catList(strlist,delim=""):
             return delim.join([str(x) for x in strlist])
         print("\t".join([self.rname,str(self.start),str(self.end),
