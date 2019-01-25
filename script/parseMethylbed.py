@@ -105,6 +105,9 @@ def getFreq(args,in_fh):
             line = line.decode('ascii')
         except AttributeError :
             pass
+        # debug
+        print(line,file=sys.stdout)
+        #
         n += 1
         read=MethRead(line)
         sitekeys=sorted(sites.keys())

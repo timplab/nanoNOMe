@@ -39,11 +39,12 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
                                     dbpath," in ",querypath,"\n"))
             command=paste("tabix",querypath,"-R",dbpath)
         }
-        cat(paste0(substr(command,1,500),"...\n"))
+        if (verbose) cat(paste0(substr(command,1,500),"...\n"))
         region.raw=system(command,intern=TRUE)
         if (verbose) cat("converting to tibble\n")
         region=do.call(rbind,strsplit(region.raw,"\t"))
         region.tb=as.tibble(region)
+        if (dim(region.tb)[1] == 0){ return(NA) }
         if (!is.null(col_names)) colnames(region.tb)=col_names
         region.tb %>% type_convert()
 }
@@ -110,6 +111,10 @@ tabix_mfreq <- function(querypath,dbpath=NULL,cov=2,trinuc_exclude="GCG",verbose
     mfreqcnames=c("chrom","start","strand","meth","unmeth","dinuc","trinuc")
     if (!is.null(dbpath)) {
         region.tb=tabix(querypath,dbpath,mfreqcnames,verbose=verbose)
+        if (is.na(region.tb)){
+            if (verbose) cat("no data\n")
+            return(tibble(freq=-1)) # if there is no data, output a tibble wiht just freq where freq=-1 for now
+        }
         if (verbose) cat("removing redundant loci\n")
         out.tb=unique(region.tb)
     }else{

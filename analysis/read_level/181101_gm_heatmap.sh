@@ -26,7 +26,7 @@ meth=$methdir/{}.pooled.meth.bed.gz
 plotpath=$plotdir/{}.$reg.heatmap.pdf
 log=$plotdir/{}.$reg.heatmap.log
 # for testing, use only the first -n entry
-com="head -n100 $bed | python -u $srcdir/../../script/readlevelHeatmap.py -v -w 20 -f 0.25 \
+com="head -n100 $bed | python -u $srcdir/../../script/readlevelHeatmap_diagonal.py -v \
   -i $meth -o $plotpath 2> $log"
 #com="python -u $srcdir/../../script/readlevelHeatmap.py -v -w 20 -f 0.25 \
 #  -i $meth -r $bed -o $plotpath 2> $log"

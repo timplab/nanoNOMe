@@ -126,6 +126,9 @@ class HeatmapRegion :
         # filter out non data points
         df_meth = df_meth.loc[df_meth['z']>0]
         df_unmeth = df_unmeth.loc[df_unmeth['z']>0]
+        # quit if no data
+        if (df_meth.shape[0] == 0 or 
+                df_unmeth.shape[0] == 0) : return
         # normalize by max count
         df_meth['z'] = df_meth['z']/np.max(df_meth['z'])
         df_unmeth['z'] = df_unmeth['z']/np.max(df_unmeth['z'])
@@ -146,7 +149,7 @@ class HeatmapRegion :
         df_unmeth['lab'] = 'Unmethylation'
         df = df_meth.append(df_unmeth)
         df['z'] = 1-df['z'] # flip scale for fill color
-        if(len(df) == 0) : return
+        #if(len(df) == 0) : return
         # ggplot
         g = (ggplot(df) +
                 facet_grid(['lab','.'])+
@@ -164,7 +167,8 @@ class HeatmapRegion :
                     axis_text=element_text(color="black"),
                     axis_text_y=element_blank(),
                     axis_ticks_major_y=element_blank(),
-                    figure_size=(3,6))
+                    figure_size=(3,6),
+                    aspect_ratio=1)
                 )
         # plot average
         cov_idx = np.nonzero(self.coverage)[0]

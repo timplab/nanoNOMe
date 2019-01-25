@@ -63,6 +63,20 @@ combos = tibble(one=c("MCF10A","MCF10A"),
                 two=c("MCF7","MDAMB231"),
                 vec=c(100000,001000),
                 ind=c(1,3))
+require(gtools)
+perm = as.tibble(permutations(2,3,c(0,1),repeats.allowed=T)) %>%
+    transmute(perm=paste0(V1,V2,V3))
+perm=perm$perm
+sup7 = tibble(front=rep(c("100","101"),length(perm)),back=rep(perm,each=2)) %>%
+    transmute(vec=paste0(front,back))
+sup7=as.numeric(sup7$vec)
+sup231 = tibble(front=rep(c("001","101"),length(perm)),back=rep(perm,each=2)) %>%
+    transmute(vec=paste0(front,back))
+sup231=as.numeric(sup231$vec)
+
+sup.list = list(sup7,sup231)
+suppvec = info(vcf)$SUPP_VEC
+
 window=2000
     
 i = 1
@@ -75,7 +89,7 @@ for (i in seq(dim(combos)[1])){
         dplyr::rename(chrom=`#chrom`)
     genes.gr = GRanges(genes)
     
-    vcf.sub = vcf[info(vcf)$SUPP_VEC==combos$vec[i]]
+    vcf.sub = vcf[suppvec %in% sup.list[[i]]]
     bpall.list = genocoTogranges(geno(vcf.sub)$CO[,combos$ind[i]])
     lapply(bpall.list,function(x){
         dist = as.data.frame(distanceToNearest(x,genes.gr))
@@ -141,7 +155,7 @@ for (i in seq(dim(combos)[1])){
         summarize(cov=n(),meth=sum(mcall),freq=meth/cov)%>%
         mutate(end=start)
     # scatterplot
-    for (methwidth in c(100,200,400,1000)){
+    for (methwidth in c(100,400)){
         methranges = lapply(bprange.list,function(x){
             resize(x,width=methwidth,fix="center")})
         regmeth.list = lapply(seq_along(methranges),function(i){
@@ -153,7 +167,6 @@ for (i in seq(dim(combos)[1])){
 
         plotscatter <- function(dat,title=title){
             ggplot(dat,aes(x=nonSV,y=SV))+
-                geom_abline(slope=1,intercept=0)+
                 geom_point()+
                 lims(x=c(0,1),y=c(0,1))+
                 theme_bw()+
@@ -162,7 +175,18 @@ for (i in seq(dim(combos)[1])){
                     panel.grid.minor = element_blank(),
                     axis.text = element_text(color="black"),
                     plot.title = element_text(size=10))+
-                ggtitle(title)
+                ggtitle(title)+
+                coord_fixed()
+        }
+        mytheme <- function(g){
+            g+
+                theme_bw()+
+                theme(
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(),
+                    axis.text = element_text(color="black"),
+                    plot.title = element_text(size=10))+
+                coord_fixed()
         }
         cpgfrac = round(dim(
             regmeth[which(regmeth$calltype=="cpg"),] %>%
@@ -174,56 +198,99 @@ for (i in seq(dim(combos)[1])){
                             paste0("cpg ; SV hypometh : ",cpgfrac))
         g.gpc = plotscatter(regmeth[regmeth$calltype=="gpc",],
                             paste0("gpc ; SV hypometh : ",gpcfrac))
-
+        del.noSV = regmeth %>%
+            dplyr::select(-SV) %>%
+            spread(bp,nonSV) %>% na.omit() %>%
+            mutate(del=`2`-`1`,type="noSV")
+        del.SV = regmeth %>%
+            dplyr::select(-nonSV) %>%
+            spread(bp,SV) %>% na.omit() %>%
+            mutate(del=`2`-`1`,type="SV")
+        dels.tb = bind_rows(del.noSV,del.SV)
+        dels.cpg = dels.tb[which(dels.tb$calltype=="cpg"),]
+        dels.gpc = dels.tb[which(dels.tb$calltype=="gpc"),]
+        dels.spread = dels.tb %>%
+            dplyr::select(-`1`,-`2`) %>%
+            spread(type,del) %>% na.omit()
+        # plotting the bp comparison
+        maxval = max(c(dels.cpg$`1`,dels.cpg$`2`))
+        g.bpcomp.cpg = mytheme(ggplot(dels.cpg,aes(x=`1`,y=`2`))+
+                               lims(x=c(0,maxval),y=c(0,maxval))+
+                               facet_wrap(~type,ncol=2)+
+                               geom_point()+
+                               labs(x="BP1",y="BP2",title="CpG"))
+        maxval = max(c(dels.gpc$`1`,dels.gpc$`2`))
+        g.bpcomp.gpc = mytheme(ggplot(dels.gpc,aes(x=`1`,y=`2`))+
+                               lims(x=c(0,maxval),y=c(0,maxval))+
+                               facet_wrap(~type,ncol=2)+
+                               geom_point()+
+                               labs(x="BP1",y="BP2",title="GpC"))
+        # plotting del
+        delspread.cpg = dels.spread[which(dels.spread$calltype == "cpg"),]
+        delspread.gpc = dels.spread[which(dels.spread$calltype == "gpc"),]
+        maxval = max(abs(c(delspread.cpg$SV,delspread.cpg$noSV)))
+        g.del.cpg = mytheme(ggplot(delspread.cpg,aes(x=noSV,y=SV))+
+                            lims(x=c(-maxval,maxval),y=c(-maxval,maxval))+
+                            geom_point()+
+                            labs(x="MCF10A",y=combos$two[i],
+                                 title="CpG BP2-BP1"))
+        maxval = max(abs(c(delspread.gpc$SV,delspread.gpc$noSV)))
+        g.del.gpc = mytheme(ggplot(delspread.gpc,aes(x=noSV,y=SV))+
+                            lims(x=c(-maxval,maxval),y=c(-maxval,maxval))+
+                            geom_point()+
+                            labs(x="MCF10A",y=combos$two[i],
+                                 title="GpC BP2-BP1"))
         plotpath = file.path(plotdir,paste0(combos$one[i],"_vs_",combos$two[i],"width",methwidth,"_scatter.pdf"))
         pdf(plotpath,3,3,useDingbats=F)
-        print(g.cpg)
-        print(g.gpc)
+        print(g.bpcomp.cpg)
+        print(g.bpcomp.gpc)
+        print(g.del.cpg)
+        print(g.del.gpc)
         dev.off()
     }
-
-    plotpath = file.path(plotdir,paste0(combos$one[i],"_vs_",combos$two[i],"TRA_byregion.pdf"))
-    pdf(plotpath,6,4,useDingbats=F)
-    for (j in seq_along(vcf.tra)){
-        print(j)
-        bp1.range = bprange.list[[1]][j]
-        bp2.range = bprange.list[[2]][j]
-        bp1 = bp.list[[1]][j]
-        bp2 = bp.list[[2]][j]
-        freq.bp1 = freq[overlapsAny(GRanges(freq),bp1.range),] %>%
-            mutate(bp = start(bp1),bpidx=1)
-        freq.bp2 = freq[overlapsAny(GRanges(freq),bp2.range),] %>%
-            mutate(bp = start(bp2),bpidx=2)
-        freq.bp = bind_rows(freq.bp1,freq.bp2) %>%
-            filter(cov>5)
-        g = ggplot(freq.bp,aes(x=start,y=freq,color=type,group=type))+
-            facet_grid(calltype~bpidx,scales="free")+
-            lims(y=c(0,1))+
-            geom_smooth(se=F)+
-            geom_point(alpha=0.5)+
-            geom_vline(aes(xintercept=bp))+
-            geom_rug(sides="b",alpha=0.5)+
-            theme_bw()+
-            theme(legend.position="bottom",
-                  panel.grid.major = element_blank(),
-                  panel.grid.minor = element_blank(),
-                  axis.text = element_text(color="black"))+
-            ggtitle(paste("bp1 :",toString(bp1),"; bp2 :",toString(bp2)))
-        gcov = ggplot(freq.bp,aes(x=start,y=cov,color=type,group=type))+
-            facet_grid(calltype~bpidx,scales="free")+
-                        geom_smooth(se=F)+
-            geom_point(alpha=0.5)+
-            geom_vline(aes(xintercept=bp))+
-            geom_rug(sides="b",alpha=0.5)+
-            theme_bw()+
-            theme(legend.position="bottom",
-                  panel.grid.major = element_blank(),
-                  panel.grid.minor = element_blank(),
-                  axis.text = element_text(color="black"))+
-            ggtitle(paste("bp1 :",toString(bp1),"; bp2 :",toString(bp2)))
-        print(g)
-    #    print(gcov)
+    if(FALSE){
+        plotpath = file.path(plotdir,paste0(combos$one[i],"_vs_",combos$two[i],"TRA_byregion.pdf"))
+        pdf(plotpath,3,3,useDingbats=F)
+        for (j in seq_along(vcf.tra)){
+            print(j)
+            bp1.range = bprange.list[[1]][j]
+            bp2.range = bprange.list[[2]][j]
+            bp1 = bp.list[[1]][j]
+            bp2 = bp.list[[2]][j]
+            freq.bp1 = freq[overlapsAny(GRanges(freq),bp1.range),] %>%
+                mutate(bp = start(bp1),bpidx=1)
+            freq.bp2 = freq[overlapsAny(GRanges(freq),bp2.range),] %>%
+                mutate(bp = start(bp2),bpidx=2)
+            freq.bp = bind_rows(freq.bp1,freq.bp2) %>%
+                filter(cov>5)
+            g = ggplot(freq.bp,aes(x=start,y=freq,color=type,group=type))+
+                facet_grid(calltype~bpidx,scales="free")+
+                lims(y=c(0,1))+
+                geom_smooth(se=F)+
+                geom_point(alpha=0.5)+
+                geom_vline(aes(xintercept=bp))+
+                geom_rug(sides="b",alpha=0.5)+
+                theme_bw()+
+                theme(legend.position="bottom",
+                      panel.grid.major = element_blank(),
+                      panel.grid.minor = element_blank(),
+                      axis.text = element_text(color="black"))+
+                ggtitle(paste("bp1 :",toString(bp1),"; bp2 :",toString(bp2)))
+            gcov = ggplot(freq.bp,aes(x=start,y=cov,color=type,group=type))+
+                facet_grid(calltype~bpidx,scales="free")+
+                geom_smooth(se=F)+
+                geom_point(alpha=0.5)+
+                geom_vline(aes(xintercept=bp))+
+                geom_rug(sides="b",alpha=0.5)+
+                theme_bw()+
+                theme(legend.position="bottom",
+                      panel.grid.major = element_blank(),
+                      panel.grid.minor = element_blank(),
+                      axis.text = element_text(color="black"))+
+                ggtitle(paste("bp1 :",toString(bp1),"; bp2 :",toString(bp2)))
+            print(g)
+                                        #    print(gcov)
+        }
+        dev.off()
     }
-    dev.off()
-
 }

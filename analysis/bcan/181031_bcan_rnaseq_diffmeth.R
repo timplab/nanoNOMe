@@ -46,10 +46,10 @@ samples = c("MCF10A","MCF7","MDAMB231")
 combos = as.tibble(t(combn(samples,2)))
 names(combos) = c("one","two")
 # get t-stat
-mindiff = 5
+mindiff = 2
 rna.pval = tibble(geneid=character(),one=character(),
                   two=character(),p=numeric(),
-                  direction=character())
+                  direction=character(),foldchange=numeric())
 require(gtools)
 for (i in seq(dim(combos)[1])){
     one = combos$one[i]
@@ -69,7 +69,7 @@ for (i in seq(dim(combos)[1])){
                 rna.pval = bind_rows(rna.pval,
                                     tibble(geneid = rna$Ensembl_ID[j],
                                            one = one,two = two,
-                                           p = pval,direction=direction))
+                                           p = pval,direction=direction,foldchange=fold))
             }
         }
     }
@@ -82,7 +82,7 @@ matchidx = match(rna.sig$geneid,db.gr$id)
 rna.sig = bind_cols(rna.sig,as.tibble(db.gr)[matchidx,]) %>%na.omit()
 sig.gr = GRanges(rna.sig)
 sig.tss = promoters(sig.gr,0,2)
-sig.window = resize(sig.tss,2002,fix="center")
+sig.window = resize(sig.tss,5002,fix="center")
 sig.prom = promoters(sig.gr,200,200)
 
 # which are under/over expressed in both 7 and 231
@@ -98,13 +98,6 @@ common.tss = promoters(common.gr,0,2)
 ovl = findOverlaps(common.tss,cgi.large)
 common.cgi = common[queryHits(ovl),]
 common.cgi.tss = as.tibble(promoters(GRanges(common.cgi),0,2))
-if (TRUE) {
-    outpath = file.path(annodir,"bcan_diffexp_bothcancer_cgi.TSS.bed")
-    bed = common.cgi.tss %>%
-        select(seqnames,start,end,genename,MCF7,strand,geneid)
-    write_tsv(bed,outpath,col_names=F)
-}
-
 
 meth.list = list()
 export=TRUE
@@ -130,63 +123,47 @@ for (i in seq(dim(combos)[1])){
         prefix=paste0(prefix,"_cgi")
         ovl.idx = overlapsAny(prom.sub,cgi.gr)
         prom.sub = prom.sub[ovl.idx]
-        tss.sub = sig.tss[ovl.idx]
+        tss.sub = tss.sub[ovl.idx]
         window.sub = window.sub[ovl.idx]
     }
     # methyltion data
     dat.list = mclapply(mc.cores=cores,seq(dim(pd.sub)[1]),function(i){
-        tabix_mfreq(pd.sub$filepath[i],prom.sub)
-    })
-    regmeth.list = lapply(seq_along(dat.list),function(i){
-        getRegionMeth(dat.list[[i]],prom.sub) %>%
+        tabix_mfreq(pd.sub$filepath[i],window.sub) %>%
             mutate(cell=pd.sub$cell[i],
                    calltype=pd.sub$calltype[i])
     })
-    regmeth = do.call(rbind,regmeth.list)
-
-    chrom.one = meth.spread%>% select(-two)%>%
-        spread(calltype,one) %>% mutate(chrom = sqrt((1-cpg)**2+gpc**2))
-    chrom.two = meth.spread%>% select(-one)%>%
-        spread(calltype,two) %>% mutate(chrom = sqrt((1-cpg)**2+gpc**2))
-    chrom = tibble(feature.index=chrom.two$feature.index,
-                   calltype="chrom",
-                   one=chrom.one$chrom,two=chrom.two$chrom) %>% na.omit()
-    meth.spread = bind_rows(meth.spread,chrom)
-    meth.spread = transmute(meth.spread,feature.index=feature.index,
-                         del=two-one,calltype=calltype) %>%
-        bind_cols(as.data.frame(window.sub[meth.spread$feature.index]))
-    meth.plt = meth.spread %>%
-        select(-one,-two)%>%
-        spread(calltype,del)%>%na.omit() %>%
-        mutate(onename=onename,twoname=twoname)
-    ymax=as.numeric(quantile(abs(meth.plt$cpg),0.99))
-    xmax=as.numeric(quantile(abs(meth.plt$gpc),0.99))
-    xthr = xmax/10
-    ythr = ymax/10
-    meth.list[[i]] = meth.plt %>%
-        filter((cpg > ythr & cpg < ymax )|
-               (cpg < -ythr & cpg > -ymax )|
-               (gpc > xthr & gpc < xmax )|
-               (gpc < -xthr & gpc > -xmax))
-    meth.list[[i]] = meth.plt
-
+    mfreq = do.call(rbind,dat.list)
+    # looking at cpg only
+    cpg.spread = mfreq %>% filter(calltype=="cpg") %>%
+        select(-meth,-unmeth,-cov) %>%
+        spread(cell,freq) %>% na.omit() %>%
+        mutate(del=two-one)
+    thr = 0.3
+    cpg.diff = cpg.spread %>%
+        filter(abs(del)>=thr)
+    cpg.gr = GRanges(cpg.diff)
+    ovl = findOverlaps(cpg.gr,window.sub)
+    cpg.diff$index = -1
+    cpg.diff$index[queryHits(ovl)] = subjectHits(ovl)
+    cpg.sum = cpg.diff%>%
+        group_by(index) %>%
+        summarize(cnt = n(),
+                  avgdiff=sum(del)/cnt) %>%
+#        filter(abs(avgdiff)>=thr,cnt>30) %>%
+        arrange(desc(abs(avgdiff))) %>%
+        mutate(direction=ifelse(avgdiff>0,"hyper","hypo"))
+    tss.diffmeth = tss.sub[cpg.sum$index,]
+    tss.diffmeth$methdirection = cpg.sum$direction
+    tss.diffmeth$methdiff = cpg.sum$avgdiff
+    
     if (export){
-        # get top sites
-        meth.sig = meth.plt %>% 
-            filter((cpg > 0.5 & gpc < -0.3 & direction == "under")|
-                   (cpg < -0.5 & gpc > 0.3 & direction == "over"))%>%
-            arrange(seqnames,start)
-        bed.tb = as.tibble(window.sub[meth.sig$feature.index,]) 
-        bed.tb = bed.tb[,c(1:3,6,9,5,13,7,8,10)]
+        
+        bed.tb = as.tibble(tss.diffmeth)
+        bed.tb = bed.tb[,c(1:3,6,9,5,14,11,16)]
+        bed.tb$foldchange = -bed.tb$foldchange
         bedout=file.path(annodir,
                          paste0(prefix,
-                                "_top_epigenetic_state_genes.TSS.2000bp.bed"))
-        write_tsv(bed.tb,bedout,col_names=F)
-        bed.tb = as.tibble(tss.sub[meth.sig$feature.index,]) 
-        bed.tb = bed.tb[,c(1:3,6,9,5,13,7,8,10)]
-        bedout=file.path(annodir,
-                         paste0(prefix,
-                                "_top_epigenetic_state_genes.TSS.bed"))
+                                ".TSS.bed"))
         write_tsv(bed.tb,bedout,col_names=F)
     }
     if (plot){

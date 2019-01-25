@@ -45,6 +45,19 @@ if (TRUE){
 db.gr = db.gr[order(db.gr$score,decreasing=T)]
 reg.gr = promoters(db.gr,upstream=5000,downstream=5000)
 
+
+
+load.bed <- function(bedfile) {
+    
+    ##Load region of interest from bed file
+    reg.bed=read.delim(gzfile(bedfile), sep="\t", header=F)
+    reg.gr=GRanges(seqnames=reg.bed[,1], ranges=IRanges(start=reg.bed[,2]+1, end=reg.bed[,3]))
+    
+    return(reg.gr)
+}
+
+cg.gr=load.bed("/home/timp/cgisl_hg38.bed.gz")
+    
 plotter <- function(data,reg,tss,calltype){
     g=ggplot(data,aes(x=start,y=freq,color=cell,group=cell))+
         geom_point(size=0.5,alpha=0.5)+
@@ -62,14 +75,37 @@ plotter <- function(data,reg,tss,calltype){
     g
 }    
 
+good.cgi=subsetByOverlaps(cg.gr, reg.gr)    
 
-pdf(plotpath,width=4,height=3,useDingbats=F)
-for (i in seq_along(db.gr)){
+
+islmeth=tibble(mcf10=rep(-1.0, length(good.cgi)), mcf7=rep(-1.0, length(good.cgi)),mdamb231=rep(-1.0, length(good.cgi)))
+
+for (i in seq_along(good.cgi)){   
+    islmeth$mcf10[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MCF10A"& pd$calltype=="cpg")], good.cgi[i])$freq)
+    islmeth$mcf7[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MCF7"& pd$calltype=="cpg")], good.cgi[i])$freq)
+    islmeth$mdamb231[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MDAMB231"& pd$calltype=="cpg")], good.cgi[i])$freq)
+}
+
+islmeth=islmeth %>%
+    mutate(diff7=mcf7-mcf10) %>%
+    mutate(diff231=mdamb231-mcf10) %>%
+    mutate(unmeth.normal=mcf10<.2) %>%
+    mutate(big.diff7=diff7 > .2) %>%
+    mutate(big.diff231=diff231 >.2) %>%
+    mutate(sum.diff=abs(diff7)+abs(diff231))
+
+best.isl=islmeth %>%
+    mutate(idx=1:n()) %>%
+    arrange(-sum.diff)
+
+pdf("/home/timp/try.pdf", width=4, height=3, useDingbats=F)
+for (i in best.isl$idx) {
     print(i)
-    db.sub = db.gr[i]
-    reg.sub = reg.gr[i]
+    myisl=good.cgi[i]
+    myisl=myisl+3e3
+
     dat.list=lapply(seq(dim(pd)[1]),function(i){
-        tabix_mfreq(pd$filepath[i],reg.sub) %>%
+        tabix_mfreq(pd$filepath[i],myisl) %>%
             mutate(calltype=pd$calltype[i],
                    cell=pd$cell[i])
     })
@@ -77,16 +113,29 @@ for (i in seq_along(db.gr)){
 
     dat.cpg = dat.sub[which(dat.sub$calltype=="cpg"),]
     dat.gpc = dat.sub[which(dat.sub$calltype=="gpc"),]
-#    rm.cpg = calculate_rollmean(dat.cpg) %>% na.omit() %>%
-#        mutate(calltype="cpg")
-#    rm.gpc = calculate_rollmean(dat.gpc) %>% na.omit() %>%
-#        mutate(calltype="gpc")
-#    dat.rm = do.call(rbind,list(rm.cpg,rm.gpc))
-    g.cpg = plotter(dat.cpg,reg.sub,db.sub,"cpg") +
+
+    g.cpg = plotter(dat.cpg,myisl,good.cgi[i],"cpg") +
         geom_smooth(se=F,method="loess",span=0.2)
-    g.gpc = plotter(dat.gpc,reg.sub,db.sub,"gpc") +
+    g.gpc = plotter(dat.gpc,myisl,good.cgi[i],"gpc") +
         geom_smooth(se=F,method="loess",span=0.1)
     print(g.cpg)
     print(g.gpc)
 }
+
 dev.off()
+
+system("scp /home/timp/try.pdf duchess:/home/timp/Dropbox/Temp/try.pdf")
+
+
+
+##ok, let's try to also look at chromatin in the +/- 200 from tss
+
+sm.prom=db.gr+200
+tss.chr=tibble(gpc.mcf10=rep(-1.0, length(sm.prom)), gpc.mcf7=rep(-1.0, length(sm.prom)),
+               gpc.mdamb231=rep(-1.0, length(sm.prom)))
+
+for (i in seq_along(sm.prom)){   
+    tss.chr$gpc.mcf10[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MCF10A"& pd$calltype=="gpc")], sm.prom[i])$freq)
+    tss.chr$gpc.mcf7[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MCF7"& pd$calltype=="gpc")], sm.prom[i])$freq)
+    tss.chr$gpc.mdamb231[i]=mean(tabix_mfreq(pd$filepath[(pd$cell=="MDAMB231"& pd$calltype=="gpc")], sm.prom[i])$freq)
+}

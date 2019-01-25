@@ -1,7 +1,7 @@
 #!/bin/bash 
 set -eo pipefail
 
-ROOT=/dilithium/Data/Nanopore/projects/nomeseq/analysis
+ROOT=/kyber/Data/Nanopore/projects/nanonome/analysis
 STEP="all"
 while :
 do
