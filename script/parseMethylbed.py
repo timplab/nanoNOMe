@@ -106,7 +106,7 @@ def getFreq(args,in_fh):
         except AttributeError :
             pass
         # debug
-        print(line,file=sys.stdout)
+#        print(line,file=sys.stdout)
         #
         n += 1
         read=MethRead(line)
