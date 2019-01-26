@@ -21,4 +21,4 @@ rule frequency_analysis:
 rule nanonome_data:
   input:
     expand("data/nanonome/pooled/mfreq/{sample}_nanoNOMe.pooled.{mod}.mfreq.txt.gz",
-      sample=["GM12878"],mod=["cpg","gpc"])
+      sample=["GM12878","MCF10A","MCF7","MDAMB231"],mod=["cpg","gpc"])

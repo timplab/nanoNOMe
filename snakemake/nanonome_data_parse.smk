@@ -6,9 +6,9 @@ rule mbed_to_mfreq:
 	input:
 		"{dir}/mbed/{sample}.{mod}.meth.bed.gz"
 	params:
-		config['codedir'],
+		config['codedir']
 	output:
-		mfreq="{dir}/mfreq/{sample}.{mod}.mfreq.txt.gz"
+		mfreq="{dir}/mfreq/{sample}.{mod}.mfreq.txt.gz",
 		log="{dir}/mfreq/{sample}.{mod}.mfreq.log"
 	shell:
 		"python -u {params}/script/parseMethylbed.py frequency -v "
