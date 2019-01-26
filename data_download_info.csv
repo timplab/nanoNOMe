@@ -5,3 +5,4 @@ hg19Tohg38.chain.gz,http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19
 hg18Tohg38.chain.gz,http://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/hg18ToHg38.over.chain.gz
 GM12878_CTCF_ChIP.bed.gz,https://www.encodeproject.org/files/ENCFF356LIU/@@download/ENCFF356LIU.bed.gz
 ctcfbsdb.txt.gz,http://insulatordb.uthsc.edu/download/allcomp.txt.gz
+GM12878_MNase.bigWig,https://www.encodeproject.org/files/ENCFF000VME/@@download/ENCFF000VME.bigWig

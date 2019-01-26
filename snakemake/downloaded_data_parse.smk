@@ -6,6 +6,9 @@ tb = pd.read_csv(config['codedir']+"/data_download_info.csv")
 fnames = list(tb['filename'])
 urls = list(tb['url'])
 
+##################################################
+# general 
+##################################################
 rule download_data:
 	params:
 		url = 
@@ -15,6 +18,23 @@ rule download_data:
 		"download/{sample}.download"
 	shell:
 		"wget -q {params.url} -O {output}"
+
+rule get_bed_regions:
+	input:
+		bed = "{dir}/{sample}.{region}.bed",
+		gs = "data/hg38/hg38_genomesize.txt"
+	output:
+		"{dir}/{sample}.{region}.{width}bp.bed"
+	shell:
+		"export LC_ALL=C && "
+		"side=$(({wildcards.width}/2)) && "
+		"bedtools slop -b $side -i {input.bed} "
+		"-g {input.gs} | sort -k1,1 -k2,2n | "
+		"awk '$3-$2>{wildcards.width}{{print}}' > {output}"
+	
+##################################################
+# hg38 reference and annotations
+##################################################
 
 rule gunzip_chain:
 	input: "download/{genome}Tohg38.chain.gz.download"
@@ -52,19 +72,10 @@ rule parse_hg38_gtf:
 		"{{ $2=$2;$3=$2+1 }}else{{ $3=$3;$2=$3-1 }} print }}' "
 		"{output.bed} | sort -k1,1 -k2,2n > {output.tss} "
 
-rule get_bed_regions:
-	input:
-		bed = "{dir}/{sample}.{region}.bed",
-		gs = "data/hg38/hg38_genomesize.txt"
-	output:
-		"{dir}/{sample}.{region}.{width}bp.bed"
-	shell:
-		"export LC_ALL=C && "
-		"side=$(({wildcards.width}/2)) && "
-		"bedtools slop -b $side -i {input.bed} "
-		"-g {input.gs} | sort -k1,1 -k2,2n | "
-		"awk '$3-$2>{wildcards.width}{{print}}' > {output}"
-	
+##################################################
+# gm12878
+##################################################
+
 rule parse_ctcfbsdb:
 	input:
 		db="download/ctcfbsdb.txt.gz.download",
@@ -102,4 +113,7 @@ rule parse_chip:
 		"> {output.sites} && "
 		"python {params}/util/bed_getcenter.py "
 		"{output.sites} | sort -k1,1 -k2,2n > {output.center}"
+
+
+
 
