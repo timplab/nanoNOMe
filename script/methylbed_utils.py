@@ -30,6 +30,12 @@ class MethRead :
         calldict=dict()
         pos=int(self.start)
         calls=re.findall('(\d+)([umx])?',self.methstring)
+#        # temporary fix for when first distance is not 0
+#        if int(calls[0][0]) != 0 :
+#            calls = [('0','x')] + calls
+#            self.ratios = ['0'] + self.ratios
+#            self.seqs = ['GCG'] + self.seqs
+#        ##
         for i,(dist,call) in enumerate(calls):
             pos+=int(dist)
             if call=="x" :
