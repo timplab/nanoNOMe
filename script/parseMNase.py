@@ -51,8 +51,9 @@ def SignalByDistance_main(args) :
         else : 
             dist_list = list(range(int(start-regstart),int(args.window-regend+end)))
         dist_signed = [ x-side for x in dist_list ]
-        if fields[9] == "-" : 
-            dist_signed = [ -x for x in dist_signed ]
+        if len(fields) >= 10 : 
+            if fields[9] == "-" : 
+                dist_signed = [ -x for x in dist_signed ]
         for pos in dist_signed : 
             try : 
                 agg_dict[pos].append(float(fields[3]))
