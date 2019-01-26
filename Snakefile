@@ -16,7 +16,9 @@ rule parse_downloaded_data:
 
 rule frequency_analysis:
   input:
-    "plots/GM12878.CTCF.metaplot.pdf"
+    "plots/GM12878_nanoNOMe.pooled.metaplot.CTCF.center.2000bp.pdf",
+    "plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf",
+    "plots/GM12878_MNase.metaplot.CTCF.center.2000bp.pdf"
 
 rule nanonome_data:
   input:
