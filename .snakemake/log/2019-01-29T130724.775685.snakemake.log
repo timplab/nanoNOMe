@@ -1,0 +1,324 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 8
+Rules claiming more threads will be scaled down.
+Job counts:
+	count	jobs
+	8	mfreq_to_wig
+	1	nanonome_data
+	16	wig_to_bigwig
+	25
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.gpc.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.wig, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.wig, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.wig.log
+    jobid: 25
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=gpc
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.gpc.mfreq.txt.gz -o data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.wig -c data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.wig &> data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MCF7_nanoNOMe.pooled.cpg.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.wig, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.wig, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.wig.log
+    jobid: 21
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=cpg
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MCF7_nanoNOMe.pooled.cpg.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.wig -c data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.wig &> data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.wig, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.wig, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.wig.log
+    jobid: 22
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=cpg
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.wig -c data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.wig &> data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.cpg.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.wig, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.wig, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.wig.log
+    jobid: 23
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=cpg
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.cpg.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.wig -c data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.wig &> data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.wig, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.wig, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.wig.log
+    jobid: 20
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=cpg
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz -o data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.wig -c data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.wig &> data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MCF7_nanoNOMe.pooled.gpc.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.wig, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.wig, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.wig.log
+    jobid: 24
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=gpc
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MCF7_nanoNOMe.pooled.gpc.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.wig -c data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.wig &> data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.gpc.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.wig, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.wig, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.wig.log
+    jobid: 19
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=gpc
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.gpc.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.wig -c data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.wig &> data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.wig.log
+
+[Tue Jan 29 13:07:25 2019]
+rule mfreq_to_wig:
+    input: data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.gpc.mfreq.txt.gz
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.wig, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.wig, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.wig.log
+    jobid: 18
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=gpc
+
+python /home/isac/Code/nanoNOMe/script/makeWig.py -v -i data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.gpc.mfreq.txt.gz -o data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.wig -c data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.wig &> data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.wig.log
+[Tue Jan 29 13:17:10 2019]
+Finished job 21.
+1 of 25 steps (4%) done
+
+[Tue Jan 29 13:17:10 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.bw
+    jobid: 4
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=cpg, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.bw
+[Tue Jan 29 13:17:13 2019]
+Finished job 22.
+2 of 25 steps (8%) done
+
+[Tue Jan 29 13:17:13 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.bw
+    jobid: 10
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=cpg, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.bw
+[Tue Jan 29 13:17:20 2019]
+Finished job 23.
+3 of 25 steps (12%) done
+
+[Tue Jan 29 13:17:20 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.bw
+    jobid: 6
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=cpg, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.bw
+[Tue Jan 29 13:17:44 2019]
+Finished job 20.
+4 of 25 steps (16%) done
+
+[Tue Jan 29 13:17:44 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.bw
+    jobid: 3
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=cpg, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.wig.
+[Tue Jan 29 13:18:10 2019]
+Finished job 4.
+5 of 25 steps (20%) done
+
+[Tue Jan 29 13:18:10 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.bw
+    jobid: 12
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=cpg, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.wig.
+[Tue Jan 29 13:18:13 2019]
+Finished job 10.
+6 of 25 steps (24%) done
+
+[Tue Jan 29 13:18:13 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.bw
+    jobid: 5
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=cpg, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.wig.
+[Tue Jan 29 13:18:22 2019]
+Finished job 6.
+7 of 25 steps (28%) done
+
+[Tue Jan 29 13:18:22 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.bw
+    jobid: 11
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=cpg, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.bw
+Removing temporary output file data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.wig.
+[Tue Jan 29 13:18:37 2019]
+Finished job 3.
+8 of 25 steps (32%) done
+
+[Tue Jan 29 13:18:37 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.bw
+    jobid: 7
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=cpg, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.wig.
+[Tue Jan 29 13:19:17 2019]
+Finished job 5.
+9 of 25 steps (36%) done
+Removing temporary output file data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.wig.
+[Tue Jan 29 13:19:18 2019]
+Finished job 12.
+10 of 25 steps (40%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.wig.
+[Tue Jan 29 13:19:23 2019]
+Finished job 11.
+11 of 25 steps (44%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.wig.
+[Tue Jan 29 13:19:35 2019]
+Finished job 7.
+12 of 25 steps (48%) done
+[Tue Jan 29 13:47:35 2019]
+Finished job 18.
+13 of 25 steps (52%) done
+
+[Tue Jan 29 13:47:35 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.bw
+    jobid: 1
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=gpc, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.bw
+
+[Tue Jan 29 13:47:35 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.bw
+    jobid: 8
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=gpc, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.bw
+[Tue Jan 29 13:48:03 2019]
+Finished job 24.
+14 of 25 steps (56%) done
+
+[Tue Jan 29 13:48:03 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.bw
+    jobid: 13
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=gpc, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.bw
+
+[Tue Jan 29 13:48:03 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.bw
+    jobid: 9
+    wildcards: dir=data/nanonome/pooled, sample=MCF7_nanoNOMe.pooled, mod=gpc, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.bw
+[Tue Jan 29 13:48:54 2019]
+Finished job 19.
+15 of 25 steps (60%) done
+
+[Tue Jan 29 13:49:03 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.bw
+    jobid: 2
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=gpc, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.bw
+
+[Tue Jan 29 13:49:08 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.bw
+    jobid: 14
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=gpc, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.wig.
+[Tue Jan 29 13:52:53 2019]
+Finished job 1.
+16 of 25 steps (64%) done
+[Tue Jan 29 13:53:07 2019]
+Finished job 25.
+17 of 25 steps (68%) done
+
+[Tue Jan 29 13:53:07 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.bw
+    jobid: 15
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=gpc, type=methylation
+
+wigToBigWig data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.bw
+
+[Tue Jan 29 13:53:08 2019]
+rule wig_to_bigwig:
+    input: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.wig, data/hg38/hg38_genomesize.txt
+    output: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.bw
+    jobid: 16
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=gpc, type=methcoverage
+
+wigToBigWig data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.wig data/hg38/hg38_genomesize.txt data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.bw
+Removing temporary output file data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.wig.
+[Tue Jan 29 13:54:02 2019]
+Finished job 13.
+18 of 25 steps (72%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.wig.
+[Tue Jan 29 13:54:16 2019]
+Finished job 8.
+19 of 25 steps (76%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.wig.
+[Tue Jan 29 13:54:49 2019]
+Finished job 9.
+20 of 25 steps (80%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.wig.
+[Tue Jan 29 13:55:01 2019]
+Finished job 2.
+21 of 25 steps (84%) done
+Removing temporary output file data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.wig.
+[Tue Jan 29 13:55:08 2019]
+Finished job 14.
+22 of 25 steps (88%) done
+Removing temporary output file data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.wig.
+[Tue Jan 29 13:56:53 2019]
+Finished job 15.
+23 of 25 steps (92%) done
+Removing temporary output file data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.wig.
+[Tue Jan 29 13:57:14 2019]
+Finished job 16.
+24 of 25 steps (96%) done
+
+[Tue Jan 29 13:57:14 2019]
+localrule nanonome_data:
+    input: data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methylation.bw, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.cpg.methcoverage.bw, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methylation.bw, data/nanonome/pooled/bigwig/GM12878_nanoNOMe.pooled.gpc.methcoverage.bw, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methylation.bw, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.cpg.methcoverage.bw, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methylation.bw, data/nanonome/pooled/bigwig/MCF10A_nanoNOMe.pooled.gpc.methcoverage.bw, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methylation.bw, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.methcoverage.bw, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methylation.bw, data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.gpc.methcoverage.bw, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methylation.bw, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.cpg.methcoverage.bw, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methylation.bw, data/nanonome/pooled/bigwig/MDAMB231_nanoNOMe.pooled.gpc.methcoverage.bw
+    jobid: 0
+
+[Tue Jan 29 13:57:14 2019]
+Finished job 0.
+25 of 25 steps (100%) done
+Complete log: /home/isac/Code/nanoNOMe/.snakemake/log/2019-01-29T130724.775685.snakemake.log

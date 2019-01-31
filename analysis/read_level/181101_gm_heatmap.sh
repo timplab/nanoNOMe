@@ -1,28 +1,27 @@
 #!/bin/bash
 srcdir=$(dirname $(readlink -f $0))
-root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-[ -z $1 ]||root="$1"
-plotdir=$root/plots/readlevel
-methdir=$root/pooled/methylation/methbyread_all
+root=/kyber/Data/Nanopore/projects/nanonome/analysis
+plotdir=$root/plots/heatmap
+[ -e $plotdir ]||mkdir $plotdir
+methdir=$root/data/nanonome/pooled/mbed
 reg=ctcf
-[ -z $2 ]||reg="$2"
-annodir=$root/annotations/gm12878
+[ -z $1 ]||reg="$1"
 if [ "$reg" == "ctcf" ];then
-  bed=$annodir/GM12878_CTCF_ctcfbsdb_allcomp.center.noTSS.2000bp.bed
-elif [ "$reg" == "atrx" ];then
-  bed=$annodir/atrx.2kb.bed
+  bed=$root/data/gm12878/GM12878_CTCF.noTSS.center.2000bp.bed
+#elif [ "$reg" == "atrx" ];then
+#  bed=$annodir/atrx.2kb.bed
 fi
 
 for cell in GM12878;do
   echo $cell
   for mod in cpg gpc;do
-    prefix=$cell.$mod
+    prefix=${cell}_nanoNOMe.pooled.$mod
     pres="$pres $prefix"
   done
 done
 echo $pres
 
-meth=$methdir/{}.pooled.meth.bed.gz
+meth=$methdir/{}.meth.bed.gz
 plotpath=$plotdir/{}.$reg.heatmap.pdf
 log=$plotdir/{}.$reg.heatmap.log
 # for testing, use only the first -n entry

@@ -1,0 +1,3 @@
+SyntaxError in line 12 of /home/isac/Code/nanoNOMe/snakemake/model_validation.smk:
+EOL while scanning string literal
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>

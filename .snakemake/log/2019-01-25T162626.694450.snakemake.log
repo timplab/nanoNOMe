@@ -1,0 +1,4 @@
+NameError in line 17 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
+name 'mfreqdir' is not defined
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>
+  File "/home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk", line 17, in <module>

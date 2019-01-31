@@ -1,0 +1,31 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 8
+Rules claiming more threads will be scaled down.
+Job counts:
+	count	jobs
+	1	get_bed_regions
+	1	parse_downloaded_data
+	2
+
+[Mon Jan 28 15:43:53 2019]
+rule get_bed_regions:
+    input: data/hg38/hg38_genes.TSS.bed, data/hg38/hg38_genomesize.txt
+    output: data/hg38/hg38_genes.TSS.200bp.bed
+    jobid: 1
+    wildcards: dir=data/hg38, sample=hg38_genes, region=TSS, width=200
+
+export LC_ALL=C && side=$((200/2)) && bedtools slop -b $side -i data/hg38/hg38_genes.TSS.bed -g data/hg38/hg38_genomesize.txt | sort -k1,1 -k2,2n | awk '$3-$2>200{print}' > data/hg38/hg38_genes.TSS.200bp.bed
+[Mon Jan 28 15:43:53 2019]
+Finished job 1.
+1 of 2 steps (50%) done
+
+[Mon Jan 28 15:43:53 2019]
+localrule parse_downloaded_data:
+    input: data/gm12878/GM12878_CTCF.center.2000bp.bed, data/hg38/hg38_genes.TSS.200bp.bed, data/hg38/hg38_cgi.bed
+    jobid: 0
+
+[Mon Jan 28 15:43:53 2019]
+Finished job 0.
+2 of 2 steps (100%) done
+Complete log: /home/isac/Code/nanoNOMe/.snakemake/log/2019-01-28T154349.579088.snakemake.log

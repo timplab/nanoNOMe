@@ -7,7 +7,9 @@ fnames = list(tb['filename'])
 urls = list(tb['url'])
 
 ##################################################
+#
 # general 
+#
 ##################################################
 rule download_data:
 	params:
@@ -33,7 +35,9 @@ rule get_bed_regions:
 		"awk '$3-$2>{wildcards.width}{{print}}' > {output}"
 	
 ##################################################
+#
 # hg38 reference and annotations
+#
 ##################################################
 
 rule gunzip_chain:
@@ -71,9 +75,20 @@ rule parse_hg38_gtf:
 		"awk 'OFS=\"\t\"{{ if($6==\"+\") "
 		"{{ $2=$2;$3=$2+1 }}else{{ $3=$3;$2=$3-1 }} print }}' "
 		"{output.bed} | sort -k1,1 -k2,2n > {output.tss} "
+rule pares_hg38_cgi:
+	input:
+		"download/hg38_cgi.txt.gz.download"
+	output:
+		"data/hg38/hg38_cgi.bed"
+	shell:
+		"gunzip -c {input} | "
+		"awk 'OFS=\"\t\"{{ print $2,$3,$4 }}' | "
+		"sort -k1,1 -k2,2n > {output}"
 
 ##################################################
+#
 # gm12878
+#
 ##################################################
 
 rule parse_ctcfbsdb:
@@ -102,14 +117,14 @@ rule parse_chip:
 		tss="data/hg38/hg38_genes.TSS.bed"
 	params: config['codedir']
 	output:
-		sites="{dir}/{sample}_{context}.bindingsites.bed",
-		center="{dir}/{sample}_{context}.center.bed"
+		sites="{dir}/{sample}_{context}.noTSS.bindingsites.bed",
+		center="{dir}/{sample}_{context}.noTSS.center.bed"
 	shell:
 		"gunzip -c {input.chip} | "
 		"bedtools intersect -a {input.ref} -b stdin -u | " #intersect with reference
 		"sort -k1,1 -k2,2n | "
 		"bedtools closest -a stdin -b {input.tss} -d | "
-		"awk 'OFS=\"\t\"{{ if($NF>2000)print $1,$2,$3 }}' " # remove features closer than 2kb
+		"awk 'OFS=\"\t\"{{ if($NF>2000)print $1,$2,$3 }}' " # remove features closer than 2kb of TSS
 		"> {output.sites} && "
 		"python {params}/util/bed_getcenter.py "
 		"{output.sites} | sort -k1,1 -k2,2n > {output.center}"

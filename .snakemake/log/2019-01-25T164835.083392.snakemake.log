@@ -1,0 +1,30 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 1
+Rules claiming more threads will be scaled down.
+Job counts:
+	count	jobs
+	1	frequency_analysis
+	2	make_gm12878_metaplot
+	3
+
+[Fri Jan 25 16:48:35 2019]
+rule make_gm12878_metaplot:
+    input: data/bsseq/pooled/mfreq/GM12878_BSseq.cpg.mfreq.txt.gz, data/bsseq/pooled/mfreq/GM12878_BSseq.gpc.mfreq.txt.gz, data/gm12878/GM12878_CTCF.center.2000bp.bed
+    output: plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf
+    jobid: 1
+    wildcards: sample=GM12878_BSseq, region=CTCF.center.2000bp
+
+Rscript /home/isac/Code/nanoNOMe/script/nanonome_plots.R metaplotByDistance -c data/bsseq/pooled/mfreq/GM12878_BSseq.cpg.mfreq.txt.gz -g data/bsseq/pooled/mfreq/GM12878_BSseq.gpc.mfreq.txt.gz -r data/gm12878/GM12878_CTCF.center.2000bp.bed -o plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf 2> /dev/null
+Terminating processes on user request, this might take some time.
+[Fri Jan 25 16:48:38 2019]
+Error in rule make_gm12878_metaplot:
+    jobid: 1
+    output: plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf
+
+RuleException:
+CalledProcessError in line 31 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
+Command ' set -euo pipefail;  Rscript /home/isac/Code/nanoNOMe/script/nanonome_plots.R metaplotByDistance -c data/bsseq/pooled/mfreq/GM12878_BSseq.cpg.mfreq.txt.gz -g data/bsseq/pooled/mfreq/GM12878_BSseq.gpc.mfreq.txt.gz -r data/gm12878/GM12878_CTCF.center.2000bp.bed -o plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf 2> /dev/null ' returned non-zero exit status 1.
+  File "/home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk", line 31, in __rule_make_gm12878_metaplot
+  File "/home/isac/.conda/envs/isacenv/lib/python3.6/concurrent/futures/thread.py", line 56, in run
+Complete log: /home/isac/Code/nanoNOMe/.snakemake/log/2019-01-25T164835.083392.snakemake.log

@@ -1,13 +1,9 @@
 #!/bin/bash
-dir=/dilithium/Data/Nanopore/projects/nomeseq/analysis/pooled/methylation/mfreq
-gs=$dir/../../../annotations/hg38/hg38_genomesize.txt
-wigdir=$dir/wig
-[ -e $wigdir ]||mkdir $wigdir
-parser=../../script/makeWig.py
-log=$wigdir/makewig.log
-samps="GM12878_wgs"
+root=/kyber/Data/Nanopore/projects/nanonome/analysis
+dir=$root/data/bsseq/mfreq
+gs=$root/data/hg38/hg38_genomesize.txt
+parser=~/Code/nanoNOMe/script/makeWig.py
 samps="GM12878_BSseq_1"
-samps="GM12878 MCF10A MCF7 MDAMB231"
 
 for samp in $samps; do
   for mod in cpg gpc; do

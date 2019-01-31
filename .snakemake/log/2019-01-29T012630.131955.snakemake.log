@@ -1,0 +1,44 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 8
+Rules claiming more threads will be scaled down.
+Job counts:
+	count	jobs
+	1	get_bed_regions
+	1	parse_chip
+	1	parse_downloaded_data
+	3
+
+[Tue Jan 29 01:26:30 2019]
+rule parse_chip:
+    input: download/GM12878_CTCF_ChIP.bed.gz.download, data/hg38/CTCF_bindingsites_hg38.bed, data/hg38/hg38_genes.TSS.bed
+    output: data/gm12878/GM12878_CTCF.noTSS.bindingsites.bed, data/gm12878/GM12878_CTCF.noTSS.center.bed
+    jobid: 7
+    wildcards: dir=data/gm12878, sample=GM12878, context=CTCF
+
+gunzip -c download/GM12878_CTCF_ChIP.bed.gz.download | bedtools intersect -a data/hg38/CTCF_bindingsites_hg38.bed -b stdin -u | sort -k1,1 -k2,2n | bedtools closest -a stdin -b data/hg38/hg38_genes.TSS.bed -d | awk 'OFS="	"{ if($NF>2000)print $1,$2,$3 }' > data/gm12878/GM12878_CTCF.noTSS.bindingsites.bed && python /home/isac/Code/nanoNOMe/util/bed_getcenter.py data/gm12878/GM12878_CTCF.noTSS.bindingsites.bed | sort -k1,1 -k2,2n > data/gm12878/GM12878_CTCF.noTSS.center.bed
+[Tue Jan 29 01:26:31 2019]
+Finished job 7.
+1 of 3 steps (33%) done
+
+[Tue Jan 29 01:26:31 2019]
+rule get_bed_regions:
+    input: data/gm12878/GM12878_CTCF.noTSS.center.bed, data/hg38/hg38_genomesize.txt
+    output: data/gm12878/GM12878_CTCF.noTSS.center.2000bp.bed
+    jobid: 3
+    wildcards: dir=data/gm12878, sample=GM12878_CTCF.noTSS, region=center, width=2000
+
+export LC_ALL=C && side=$((2000/2)) && bedtools slop -b $side -i data/gm12878/GM12878_CTCF.noTSS.center.bed -g data/hg38/hg38_genomesize.txt | sort -k1,1 -k2,2n | awk '$3-$2>2000{print}' > data/gm12878/GM12878_CTCF.noTSS.center.2000bp.bed
+[Tue Jan 29 01:26:31 2019]
+Finished job 3.
+2 of 3 steps (67%) done
+
+[Tue Jan 29 01:26:31 2019]
+localrule parse_downloaded_data:
+    input: data/gm12878/GM12878_CTCF.noTSS.center.2000bp.bed, data/hg38/hg38_genes.TSS.200bp.bed, data/hg38/hg38_cgi.bed
+    jobid: 0
+
+[Tue Jan 29 01:26:31 2019]
+Finished job 0.
+3 of 3 steps (100%) done
+Complete log: /home/isac/Code/nanoNOMe/.snakemake/log/2019-01-29T012630.131955.snakemake.log

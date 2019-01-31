@@ -1,0 +1,5 @@
+Building DAG of jobs...
+MissingInputException in line 19 of /home/isac/Code/nanoNOMe/Snakefile:
+Missing input files for rule model_validation:
+plots/NA12878_ROC_GpC_methylation_gpc_model.pdf
+plots/NA12878_ROC_CpG_methylation_cpg_model.pdf

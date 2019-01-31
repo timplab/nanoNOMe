@@ -1,9 +1,9 @@
 #!/bin/bash
 cells="MCF10A MCF7 MDAMB231"
 cells="$cells GM12878"
-root=/dilithium/Data/Nanopore/projects/nomeseq/analysis
-bsseqdir=/dilithium/Data/NGS/projects/gm12878/bsseq/bamnodup
-dbdir=$root/database/hg38
+root=/kyber/Data/Nanopore/projects/nanonome/analysis
+dbdir=$root/data/hg38
+gs=$dbdir/hg38_genomesize.txt
 #regbed=$dbdir/hg38_repeats_LINE_long.bed
 #reg=LINE_long
 #regbed=$dbdir/hg38_LINE_chr7_L1ME3B.bed
@@ -19,45 +19,46 @@ elif [ "$1" == "line" ];then
   reg=LINE
   regbed=$dbdir/hg38_${reg}_onlyNanopore.bed
 fi
-pooldir=$root/pooled
-outdir=$pooldir/igv
+outdir=$root/igv
 
 # first expand the region
 echo "bed"
 bedbase=${regbed%.bed}
 bed=$bedbase.10kb.bed
-awk 'OFS="\t"{ if($2<5000){ $2=0 }else{ $2=$2-5000 };$3=$2+10000; if ($12>20 && $2 >=0 ) { print $1,$2,$3,$11 } }' $regbed |\
+bedtools slop -b 5000 -i $regbed -g $gs |\
   sort -k1,1 -k2,2n | uniq > $bed
-exit
 
 if [ "bsseq" == "$2" ];then
   echo "bsseq"
-  bam=$(find $bsseqdir -name "GM12878*nodup.bam")
+  bam=$root/data/bsseq/GM12878_BSseq.nodup.bam
   base=$(basename "$bam")
   base=${base%%.*}
-  out=$outdir/$base.bsseq.$reg.bam
+  out=$outdir/$base.$reg.bam
   echo $out
   samtools view -@ 10 -L $bed -hb $bam > $out
   samtools index $out
   exit
 fi
 
+pooldir=$root/data/nanonome/pooled
+bamdir=$pooldir/bam
+mbeddir=$pooldir/mbed
+
 for cell in $cells;do
-  echo $cell
-  bam=$pooldir/bam/$cell.pooled.bam
-  mbeddir=$pooldir/methylation/methbyread_all
-  cpg=$mbeddir/$cell.cpg.pooled.meth.bed.gz
-  gpc=$mbeddir/$cell.gpc.pooled.meth.bed.gz
+  base=${cell}_nanoNOMe.pooled
+  bam=$bamdir/$base.bam
+  cpg=$mbeddir/$base.cpg.meth.bed.gz
+  gpc=$mbeddir/$base.gpc.meth.bed.gz
   script=../../script/convertBam.py
-  log=$pooldir/igv/$cell.$reg.log
-  outsort=$pooldir/igv/$cell.$reg.sorted.bam
+  log=$outdir/$base.$reg.log
+  out=$outdir/$base.$reg.bam
 
   com="python -u $script -v -t 10 \
     -b $bam -c $cpg -g $gpc -r $bed 2> $log |\
-    samtools sort -o $outsort"
+    samtools sort -o $out"
   echo $com
   eval $com
-  samtools index $outsort
+  samtools index $out
 done
 
 

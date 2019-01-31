@@ -4,6 +4,7 @@
 import os
 import sys
 import argparse
+import gzip
 import numpy as np
 import pandas as pd
 import random
@@ -23,12 +24,12 @@ def parseArgs() :
             help="output file path")
     parent_parser.add_argument('-v','--verbose',action='store_true',default=False,
             help="verbose output")
-    parent_parser.add_argument('--methylated',type=argparse.FileType('r'),required=True,
-            help="methylated data")
-    parent_parser.add_argument('--unmethylated',type=argparse.FileType('r'),required=True,
-            help="unmethylated data")
-    parent_parser.add_argument('--motif',type=str,required=False,
-            default="CG",help="methylation motif (CG,GC,etc, default CG)")
+    parent_parser.add_argument('--methylated',type=os.path.abspath,required=True,
+            help="methylated data (gzipped)")
+    parent_parser.add_argument('--unmethylated',type=os.path.abspath,required=True,
+            help="unmethylated data (gzipped)")
+    parent_parser.add_argument('--model',type=str,required=False,
+            default="cpg",help="methylation model (cpg,gpc,etc, default cpg)")
     # parser for frequency
     parser_roc= subparsers.add_parser('roc',parents=[parent_parser],
             help = 'plot roc curve')
@@ -48,26 +49,31 @@ class MethylQuery :
         self.numsites = int(fields[9])
         self.sequence = fields[10]
 
-def filter_query(fh,motif,num) :
+def filter_query(fp,motif,num) :
     sites = list()
-    for line in fh :
-        if "chrom" in line :
-            continue
-        query = MethylQuery(line.strip().split("\t"))
-        if query.numsites != 1 :
-            continue
-        assert(query.sequence.count(motif) == 1)
-        sites.append(query.ratio)
-    random.shuffle(sites)
+    with gzip.open(fp,'rt') as fh :
+        for line in fh :
+            if "chrom" in line :
+                continue
+            query = MethylQuery(line.strip().split("\t"))
+            if query.numsites != 1 :
+                continue
+            assert(query.sequence.count(motif) == 1)
+            sites.append(query.ratio)
+        random.shuffle(sites)
     return sites[0:num]
 
 def getROC(args) :
     if args.verbose : print("generating ROC curves to {}".format(args.out),file=sys.stderr)
     # reading in the data
+    if args.model == "cpg" :
+        motif = "CG"
+    elif args.model == "gpc" :
+        motif = "GC"
     if args.verbose : print("reading in unmethylated data",file=sys.stderr)
-    unmeth_sites = filter_query(args.unmethylated,args.motif,args.num)
+    unmeth_sites = filter_query(args.unmethylated,motif,args.num)
     if args.verbose : print("reading in methylated data",file=sys.stderr)
-    meth_sites = filter_query(args.methylated,args.motif,args.num)
+    meth_sites = filter_query(args.methylated,motif,args.num)
     # thresholds
     meth_array = np.array(meth_sites)
     unmeth_array = np.array(unmeth_sites)

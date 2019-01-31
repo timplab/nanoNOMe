@@ -1,0 +1,3 @@
+SyntaxError in line 63 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
+EOL while scanning string literal
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>

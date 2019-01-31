@@ -1,0 +1,43 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 8
+Rules claiming more threads will be scaled down.
+Job counts:
+	count	jobs
+	1	frequency_analysis
+	2	make_gm12878_metaplot
+	3
+
+[Fri Jan 25 16:48:46 2019]
+rule make_gm12878_metaplot:
+    input: data/bsseq/pooled/mfreq/GM12878_BSseq.cpg.mfreq.txt.gz, data/bsseq/pooled/mfreq/GM12878_BSseq.gpc.mfreq.txt.gz, data/gm12878/GM12878_CTCF.center.2000bp.bed
+    output: plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf
+    jobid: 1
+    wildcards: sample=GM12878_BSseq, region=CTCF.center.2000bp
+
+Rscript /home/isac/Code/nanoNOMe/script/nanonome_plots.R metaplotByDistance -c data/bsseq/pooled/mfreq/GM12878_BSseq.cpg.mfreq.txt.gz -g data/bsseq/pooled/mfreq/GM12878_BSseq.gpc.mfreq.txt.gz -r data/gm12878/GM12878_CTCF.center.2000bp.bed -o plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf 2> /dev/null
+
+[Fri Jan 25 16:48:46 2019]
+rule make_gm12878_metaplot:
+    input: data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz, data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.gpc.mfreq.txt.gz, data/gm12878/GM12878_CTCF.center.2000bp.bed
+    output: plots/GM12878_nanoNOMe.pooled.metaplot.CTCF.center.2000bp.pdf
+    jobid: 2
+    wildcards: sample=GM12878_nanoNOMe.pooled, region=CTCF.center.2000bp
+
+Rscript /home/isac/Code/nanoNOMe/script/nanonome_plots.R metaplotByDistance -c data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz -g data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.gpc.mfreq.txt.gz -r data/gm12878/GM12878_CTCF.center.2000bp.bed -o plots/GM12878_nanoNOMe.pooled.metaplot.CTCF.center.2000bp.pdf 2> /dev/null
+[Fri Jan 25 16:49:11 2019]
+Finished job 2.
+1 of 3 steps (33%) done
+[Fri Jan 25 16:49:35 2019]
+Finished job 1.
+2 of 3 steps (67%) done
+
+[Fri Jan 25 16:49:35 2019]
+localrule frequency_analysis:
+    input: plots/GM12878_nanoNOMe.pooled.metaplot.CTCF.center.2000bp.pdf, plots/GM12878_BSseq.metaplot.CTCF.center.2000bp.pdf
+    jobid: 0
+
+[Fri Jan 25 16:49:35 2019]
+Finished job 0.
+3 of 3 steps (100%) done
+Complete log: /home/isac/Code/nanoNOMe/.snakemake/log/2019-01-25T164846.003235.snakemake.log

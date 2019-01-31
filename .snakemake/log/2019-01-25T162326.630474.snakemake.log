@@ -1,0 +1,3 @@
+SyntaxError in line 22 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
+lambda cannot contain assignment
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>

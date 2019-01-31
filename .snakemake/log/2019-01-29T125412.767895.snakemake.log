@@ -1,0 +1,33 @@
+Building DAG of jobs...
+Job counts:
+	count	jobs
+	8	mbed_to_mfreq
+	8	mfreq_to_wig
+	1	nanonome_data
+	16	wig_to_bigwig
+	33
+
+[Tue Jan 29 12:54:14 2019]
+rule mbed_to_mfreq:
+    input: data/nanonome/pooled/mbed/GM12878_nanoNOMe.pooled.cpg.meth.bed.gz
+    output: data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz, data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.log
+    jobid: 32
+    wildcards: dir=data/nanonome/pooled, sample=GM12878_nanoNOMe.pooled, mod=cpg
+
+python -u /home/isac/Code/nanoNOMe/script/parseMethylbed.py frequency -v -i data/nanonome/pooled/mbed/GM12878_nanoNOMe.pooled.cpg.meth.bed.gz -m cpg 2> data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.log| bgzip > data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz && tabix -b 2 -e 2 data/nanonome/pooled/mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz
+
+[Tue Jan 29 12:54:14 2019]
+rule mbed_to_mfreq:
+    input: data/nanonome/pooled/mbed/MCF10A_nanoNOMe.pooled.cpg.meth.bed.gz
+    output: data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.txt.gz, data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.log
+    jobid: 33
+    wildcards: dir=data/nanonome/pooled, sample=MCF10A_nanoNOMe.pooled, mod=cpg
+
+python -u /home/isac/Code/nanoNOMe/script/parseMethylbed.py frequency -v -i data/nanonome/pooled/mbed/MCF10A_nanoNOMe.pooled.cpg.meth.bed.gz -m cpg 2> data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.log| bgzip > data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.txt.gz && tabix -b 2 -e 2 data/nanonome/pooled/mfreq/MCF10A_nanoNOMe.pooled.cpg.mfreq.txt.gz
+
+[Tue Jan 29 12:54:14 2019]
+rule mbed_to_mfreq:
+    input: data/nanonome/pooled/mbed/MDAMB231_nanoNOMe.pooled.gpc.meth.bed.gz
+    output: data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.gpc.mfreq.txt.gz, data/nanonome/pooled/mfreq/MDAMB231_nanoNOMe.pooled.gpc.mfreq.log
+    jobid: 30
+    wildcards: dir=data/nanonome/pooled, sample=MDAMB231_nanoNOMe.pooled, mod=gpc

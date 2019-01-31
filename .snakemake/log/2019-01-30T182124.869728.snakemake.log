@@ -1,0 +1,4 @@
+Building DAG of jobs...
+MissingInputException in line 10 of /home/isac/Code/nanoNOMe/snakemake/model_validation.smk:
+Missing input files for rule make_roc_curve:
+data/methylation_standards/NA12878_GpC.subset.gpc.meth.tsv.gz

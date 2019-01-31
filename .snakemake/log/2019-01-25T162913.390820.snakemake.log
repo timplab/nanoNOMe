@@ -1,0 +1,4 @@
+Building DAG of jobs...
+MissingInputException in line 5 of /home/isac/Code/nanoNOMe/snakemake/nanonome_data_parse.smk:
+Missing input files for rule mbed_to_mfreq:
+data/nanonome/pooled/mbed/GM12878_nanoNOMe.pooled.metaplot.CTCF.center.2000bp.pdfplots/GM12878_BSseq.gpc.meth.bed.gz

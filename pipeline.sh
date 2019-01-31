@@ -152,8 +152,6 @@ if [[ $STEP =~ all|step0|bcanAnnotation ]];then
   Rscript $CODEROOT/annotations/181031_bcan_rnaseq.R
 fi
 
-
-
 ############################################################
 #
 # Step 0b. Basecalling, alignment, methylation calling,
@@ -176,7 +174,7 @@ if [[ $STEP =~ all|step1|roc ]];then
   echo "roc curve"
   # cpg
   python script/test_methylmodel.py roc -v \
-    --methylated $ROOT/data/na12878_methylation/NA12878_CpG.cpg.meth.subset.tsv \
+    --methylated $ROOT/data/na12879_methylation/NA12878_CpG.cpg.meth.subset.tsv \
     --unmethylated $ROOT/data/na12878_methylation/NA12878_unmethylated.cpg.meth.subset.tsv \
     -o $ROOT/plots/model/NA12878_CpG_ROC.pdf -n 100000
   # gpc

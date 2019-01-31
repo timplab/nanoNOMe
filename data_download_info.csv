@@ -3,6 +3,10 @@ hg38.genome.fa.gz,ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/releas
 hg38_genes.gtf.gz,ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_29/gencode.v29.annotation.gtf.gz
 hg19Tohg38.chain.gz,http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
 hg18Tohg38.chain.gz,http://hgdownload.soe.ucsc.edu/goldenPath/hg18/liftOver/hg18ToHg38.over.chain.gz
+hg38_cgi.txt.gz,http://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/cpgIslandExtUnmasked.txt.gz
 GM12878_CTCF_ChIP.bed.gz,https://www.encodeproject.org/files/ENCFF356LIU/@@download/ENCFF356LIU.bed.gz
 ctcfbsdb.txt.gz,http://insulatordb.uthsc.edu/download/allcomp.txt.gz
 GM12878_MNase.bigWig,https://www.encodeproject.org/files/ENCFF000VME/@@download/ENCFF000VME.bigWig
+GM12878_rnaseq_1.tsv,https://www.encodeproject.org/files/ENCFF212CQQ/@@download/ENCFF212CQQ.tsv
+GM12878_rnaseq_2.tsv,https://www.encodeproject.org/files/ENCFF350QZU/@@download/ENCFF350QZU.tsv
+

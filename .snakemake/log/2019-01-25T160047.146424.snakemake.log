@@ -1,0 +1,3 @@
+SyntaxError in line 8 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
+keyword argument repeated
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>

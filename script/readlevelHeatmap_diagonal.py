@@ -47,11 +47,17 @@ class HeatmapRegion :
         self.regfields = regline.strip().split("\t")
         self.coord = bed_to_coord(regline)
         self.chrom,self.start,self.end = coord_to_bed(self.coord)
-        self.id = self.regfields[3]
         if len(self.regfields) > 6 :
-            self.name = self.regfields[6]
+            self.title= "{} {} ({})".format(self.regfields[6],
+                    self.coord,self.regfields[5])
+        elif len(self.regfields) > 4 :
+            self.title= "{} {} ({})".format(self.regfields[3],
+                    self.coord,self.regfields[5])
+        elif len(self.regfields) > 3 : 
+            self.title= "{} ({})".format(self.coord,self.regfields[5])
         else :
-            self.name = self.id
+            self.title= self.coord
+
         self.center = self.start + np.floor((self.end-self.start)/2)
         self.metharrays=[]
         self.totreads=0
@@ -101,12 +107,6 @@ class HeatmapRegion :
                     self.matrix[y,x] = 0.1
         return 
     def plot(self,thr,window) :
-        # title
-        title="{} {}:{}-{} ({})".format(self.name,
-                self.chrom,
-                self.start,
-                self.end,
-                self.regfields[5])
         # plot range
         dist_min = min(self.dist)
         dist_max = max(self.dist)
@@ -161,7 +161,7 @@ class HeatmapRegion :
                     breaks=(0,1),
                     labels=('High','Low'),
                     name="Co-occurrence") +
-                labs(x="Distance to center",y=None,title=title) +
+                labs(x="Distance to center",y=None,title=self.title) +
                 theme_bw() +
                 theme(panel_grid=element_blank(),
                     axis_text=element_text(color="black"),
@@ -179,7 +179,7 @@ class HeatmapRegion :
                 geom_line(aes(x='x',y='y'))+
                 lims(x=(dist_min,dist_max),y=(0,1))+
                 labs(x="Distance to center",y="Meth Freq",
-                    title=title)+
+                    title=self.title)+
                 theme_bw()+
                 theme(panel_grid=element_blank(),
                     axis_text=element_text(color="black"),
@@ -205,7 +205,7 @@ def readlevelHeatmap(datapath,reg,thr=0.1,window=10,verbose=False) :
             heat.totreads,len(data)),file=sys.stderr)
     heat.makeMatrix(window)
     g = heat.plot(thr,window)
-    if verbose : print(heat.name,file=sys.stderr)
+    if verbose : print(heat.title,file=sys.stderr)
     return g
 
 if __name__=="__main__":

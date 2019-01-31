@@ -1,0 +1,4 @@
+PermissionError in line 4 of /home/isac/Code/nanoNOMe/Snakefile:
+[Errno 13] Permission denied: '/shared'
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 4, in <module>
+  File "/home/isac/.conda/envs/isacenv/lib/python3.6/os.py", line 220, in makedirs

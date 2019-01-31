@@ -1,0 +1,3 @@
+SyntaxError in line 12 of /home/isac/Code/nanoNOMe/snakemake/nanonome_data_parse.smk:
+invalid syntax
+  File "/home/isac/Code/nanoNOMe/Snakefile", line 11, in <module>

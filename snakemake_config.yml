@@ -1,2 +1,2 @@
-workdir: /shared # output directory for files
-codedir: /home/ubuntu/Code/nanoNOMe # directory of this file
+workdir: /kyber/Data/Nanopore/projects/nanonome/analysis # output directory for files
+codedir: /home/isac/Code/nanoNOMe # directory of this file
