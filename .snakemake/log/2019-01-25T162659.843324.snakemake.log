@@ -1,5 +1,0 @@
-Building DAG of jobs...
-MissingInputException in line 13 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
-Missing input files for rule make_gm12878_metaplot:
-mfreq/GM12878_nanoNOMe.pooled.gpc.mfreq.txt.gz
-mfreq/GM12878_nanoNOMe.pooled.cpg.mfreq.txt.gz

@@ -1,4 +1,0 @@
-Building DAG of jobs...
-MissingInputException in line 32 of /home/isac/Code/nanoNOMe/snakemake/nanonome_data_parse.smk:
-Missing input files for rule wig_to_bigwig:
-data/nanonome/pooled/bigwig/MCF7_nanoNOMe.pooled.cpg.coverage.wig

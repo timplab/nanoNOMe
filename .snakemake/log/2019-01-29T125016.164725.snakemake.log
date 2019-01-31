@@ -1,4 +1,0 @@
-SyntaxError:
-Not all output, log and benchmark files of rule mfreq_to_wig contain the same wildcards. This is crucial though, in order to avoid that two or more jobs write to the same file.
-  File "/home/isac/Code/nanoNOMe/Snakefile", line 11, in <module>
-  File "/home/isac/Code/nanoNOMe/snakemake/nanonome_data_parse.smk", line 30, in <module>

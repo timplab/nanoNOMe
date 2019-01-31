@@ -1,5 +1,0 @@
-UnboundLocalError in line 10 of /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk:
-local variable 'prefix' referenced before assignment
-  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>
-  File "/home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk", line 15, in <module>
-  File "/home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk", line 10, in get_dir_from_samplename

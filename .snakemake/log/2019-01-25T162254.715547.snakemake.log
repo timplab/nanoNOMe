@@ -1,4 +1,0 @@
-IndentationError in line 19 of <tokenize>:
-unindent does not match any outer indentation level (<tokenize>, line 19)
-  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>
-  File "/home/isac/.conda/envs/isacenv/lib/python3.6/tokenize.py", line 578, in _tokenize

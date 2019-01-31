@@ -1,3 +1,0 @@
-WorkflowError in line 9 of /home/isac/Code/nanoNOMe/Snakefile:
-Failed to open /home/isac/Code/nanoNOMe/snakemake/frequency_analysis.smk.
-  File "/home/isac/Code/nanoNOMe/Snakefile", line 9, in <module>
