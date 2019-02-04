@@ -65,6 +65,6 @@ rule plot_methylation_chromatin_by_expression_quartile:
 	params:
 		config['codedir']
 	shell:
-		"Rscrpt {params}/script/methylation_chromatin_by_expression.R "
+		"Rscrpt {params}/analysis/frequency/methylation_chromatin_by_expression.R "
 		"blah blah"
 		

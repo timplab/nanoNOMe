@@ -1,24 +1,26 @@
 #!/usr/bin/Rscript
 library(tidyverse)
+library(parallel)
 library(GenomicRanges)
 library(GGally)
-source("../../plot/methylation_plot_utils.R")
+source("../../script/methylation_plot_utils.R")
+cores=detectCores()
 
 # data
-root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
-datroot=file.path(root,"pooled/methylation/mfreq_all")
+root="/kyber/Data/Nanopore/projects/nanonome/analysis"
+datroot=file.path(root,"data/nanonome/pooled/mfreq")
 cell="GM12878"
 lowercell="gm12878"
-cpgpath=file.path(datroot,paste0(cell,".cpg.methfreq.txt.gz"))
-gpcpath=file.path(datroot,paste0(cell,".gpc.methfreq.txt.gz"))
+cpgpath=file.path(datroot,paste0(cell,"_nanoNOMe.pooled.cpg.mfreq.txt.gz"))
+gpcpath=file.path(datroot,paste0(cell,"_nanoNOMe.pooled.gpc.mfreq.txt.gz"))
 pd=tibble(cell=cell,type=c("cpg","gpc"),filepath=c(cpgpath,gpcpath))
-cgi.fp=file.path(root,"database/hg38/hg38_cgi.txt.gz")
-plotwhat="correlation_by_chromatin"
+cgi.fp=file.path(root,"data/hg38/hg38_cgi.bed")
+plotwhat="aggregateByexpression"
 if ( plotwhat == "aggregateByexpression" ){
-    tss.fp=file.path(root,"database/hg38/hg38_genes.TSS.2000bp.bed")
+    tss.fp=file.path(root,"data/hg38/hg38_genes.TSS.slop2000bp.bed")
     subset=FALSE
     # plot dir
-    plotdir=file.path(root,"plots/aggregate")
+    plotdir=file.path(root,"plots")
     plotpath=file.path(plotdir,paste0(cell,"_TSSbyExp.pdf"))
 } else if ( plotwhat == "correlation" | plotwhat == "correlation_by_chromatin"){
     tss.fp=file.path(root,"database/hg38/hg38_genes.TSS.400bp.bed")    
@@ -30,23 +32,24 @@ if ( plotwhat == "aggregateByexpression" ){
 if (!dir.exists(plotdir)) dir.create(plotdir,recursive=TRUE)
 #read in tss db
 tss.gr=load_db(tss.fp)
+tss.gr$id = sapply(strsplit(tss.gr$id,"[.]"),"[[",1)
+
 # cgi db
-cgi.cnames=c("idx","chrom","start","end")
-cgi = GRanges(read_tsv(cgi.fp,cgi.cnames))
+cgi = load_db(cgi.fp)
 tss.cgi = tss.gr[overlapsAny(tss.gr,cgi)]
 cgi.id = tss.cgi$id
 
 # rnaseq database
-exp.dir=file.path(root,"database",lowercell,"rnaseq")
-exp.fp=c(file.path(exp.dir,paste0(cell,"_rnaseq.1.tsv")),
-         file.path(exp.dir,paste0(cell,"_rnaseq.2.tsv")))
+exp.dir=file.path(root,"data",lowercell)
+exp.fp=c(file.path(exp.dir,paste0(cell,"_rnaseq_1.tsv")),
+         file.path(exp.dir,paste0(cell,"_rnaseq_2.tsv")))
 # expression data parsing
 qtiles=seq(0,1,.25)
 exp.list=lapply(exp.fp,read_tsv)
 exp.list=lapply(seq_along(exp.list),function(i){
     x=exp.list[[i]]
     id=sapply(strsplit(x$gene_id,"[.]"),"[[",1)
-    y=tibble(id=id,transcripts=x$"transcript_id(s)",fpkm=x$FPKM_ci_upper_bound)
+    y=tibble(id=id,transcripts=x$2"transcript_id(s)",fpkm=x$FPKM_ci_upper_bound)
     y=y[which(y$id %in% tss.gr$id),]
     qs=quantile(y$fpkm,probs=c(0.25,0.5,0.75))
     y%>%mutate(qtile=ifelse(fpkm>=qs[1],2,1),
@@ -60,7 +63,7 @@ exp.qtile=exp%>%select(-fpkm)%>%
 # using only genes that are consistent b/w the two replicates, taking average
 exp.fpkm=exp[which(exp$id %in% exp.qtile$id),] %>%
     group_by(id,transcripts,qtile)%>%summarize(fpkm=mean(fpkm))
-save=TRUE
+save=FALSE
 if ( save == TRUE ){
     exp.out=exp.fpkm %>% rename("qtile"="quartile")
     qtile.fp = file.path(exp.dir,paste0(cell,"_rnaseq_gene_quartiles.tsv"))
@@ -89,7 +92,7 @@ tss.gr$qtile=exp.fpkm$qtile[match(tss.gr$id,exp.fpkm$id)]
 tss.gr$fpkm=exp.fpkm$fpkm[match(tss.gr$id,exp.fpkm$id)]
 
 # read in data around TSS
-dat.tss=lapply(seq(dim(pd)[1]),function(i){
+dat.tss=mclapply(mc.cores=cores,seq(dim(pd)[1]),function(i){
     tabix_mfreq(pd$filepath[i],tss.fp)})
 
 if ( grepl("correlation",plotwhat ){
@@ -210,8 +213,14 @@ if ( plotwhat == "aggregateByexpression" ){
     g=ggplot(dat.plt,aes(x=dist,y=freq,linetype=qtile,color=mcall))+
         theme_bw()+geom_line()+
         lims(y=c(0,1))+
-        labs(x="Distance to TSS", y="Average methylation")
-    pdf(plotpath,width=6,height=4,useDingbats=F)
+        labs(x="Distance to TSS", y="Average methylation")+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.text = element_text(color="black"),
+              legend.position="bottom",
+              plot.title = element_text(size=10,hjust=0))+
+
+    pdf(plotpath,width=4,height=3,useDingbats=F)
     print(g)
     dev.off()
 

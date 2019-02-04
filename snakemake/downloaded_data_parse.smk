@@ -26,7 +26,7 @@ rule get_bed_regions:
 		bed = "{dir}/{sample}.{region}.bed",
 		gs = "data/hg38/hg38_genomesize.txt"
 	output:
-		"{dir}/{sample}.{region}.{width}bp.bed"
+		"{dir}/{sample}.{region}.slop{width}bp.bed"
 	shell:
 		"export LC_ALL=C && "
 		"side=$(({wildcards.width}/2)) && "

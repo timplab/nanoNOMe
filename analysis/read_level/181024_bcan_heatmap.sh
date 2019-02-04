@@ -9,6 +9,8 @@ reg=bcan_promoters
 annodir=$root/data/bcan
 if [ "$reg" == "bcan_promoters" ];then
   bed=$annodir/bcan_select.2kb.bed
+elif [ "$reg" == "bcansv" ];then
+  bed=$annodir/chr19_deletion_mcf10a_mda.flank2000bp.bed
 elif [ "$reg" == "comparison" ];then
   bed=$annodir/bcan_10a_vs_231_promoters.bed
 elif [ "$reg" == "rna" ];then

@@ -8,11 +8,11 @@ library(VariantAnnotation)
 source(file.path(srcdir,"../../script/methylation_plot_utils.R"))
 
 cores=detectCores()
-root="/dilithium/Data/Nanopore/projects/nomeseq/analysis"
-datroot=file.path(root,"pooled/methylation/mfreq_all")
+root="/kyber/Data/Nanopore/projects/nanonome/analysis"
+datroot=file.path(root,"data/nanonome/pooled/mfreq"
 cells=c("GM12878","MCF10A","MCF7","MDAMB231")
-svpath=file.path(root,"pooled/sv/merged_SURVIVOR_1kbp_typesafe_10_31_2018.sort.anno.vcf.gz")
-outpath=file.path(root,"sv/svsummary.txt")
+svpath=file.path(root,"data/nanonome/pooled/sniffles/merged_cancer_1kbpdist.vcf.gz")
+outpath=file.path(root,"data/nanonome/pooled/sniffles/svsummary.txt")
 
 vcf = readVcf(svpath,"hg38")
 vcf.tb = read_tsv(svpath,comment="##")
@@ -20,24 +20,13 @@ vcf.tb = read_tsv(svpath,comment="##")
 vcf.del = vcf[info(vcf)$SVTYPE=="DEL"]
 
 # all possible combinations of supp vec
-require(gtools)
-perm = as.tibble(permutations(2,3,c(0,1),repeats.allowed=T)) %>%
-    transmute(perm=paste0(V1,V2,V3))
-perm=perm$perm
-supall = tibble(front="111",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup10 = tibble(front="10",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup7 = tibble(front="100",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup231 = tibble(front="1",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup107 = tibble(front="110",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup10231 = tibble(front="11",back=perm) %>%
-    transmute(vec=paste0(front,back))
-sup7231 = tibble(front="101",back=perm) %>%
-    transmute(vec=paste0(front,back))
+supall = tibble(vec="111")
+sup10 = tibble(vec="100")
+sup7 = tibble(vec="010")
+sup231 = tibble(vec="001")
+sup107 = tibble(vec="110")
+sup10231 = tibble(vec="101")
+sup7231 = tibble(vec="011")
 supvec.tb = tibble(all=supall$vec,
                    MCF10A=sup10$vec,
                    MCF7=sup7$vec,
@@ -75,7 +64,7 @@ tra.counts = as.tibble(
                             supvec.tb$value)]))
 # INS
 vcf.sub = vcf[svtypes=="INS"]
-widths = info(vcf.sub)$AVGLEN
+widths = info(vcf.sub)$SVLEN
 vcf.filt = vcf.sub[which(widths>lenthr)]
 ins.counts = as.tibble(
     table(
@@ -83,7 +72,7 @@ ins.counts = as.tibble(
                             supvec.tb$value)]))
 # DUP
 vcf.sub = vcf[svtypes=="DUP"]
-widths = info(vcf.sub)$AVGLEN
+widths = info(vcf.sub)$SVLEN
 vcf.filt = vcf.sub[which(widths>lenthr)]
 dup.counts = as.tibble(
     table(
@@ -92,7 +81,7 @@ dup.counts = as.tibble(
 
 # INV
 vcf.sub = vcf[svtypes=="INV"]
-widths = info(vcf.sub)$AVGLEN
+widths = info(vcf.sub)$SVLEN
 vcf.filt = vcf.sub[which(widths>lenthr)]
 inv.counts = as.tibble(
     table(

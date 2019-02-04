@@ -9,7 +9,7 @@ reg="bcanpromoter"
 if [ "$reg" == "bcanpromoter" ];then
   bed=$annodir/bcan_diffexp_bothcancer_cgi.TSS.20kb.bed
 elif [ "$reg" == "bcansv" ];then
-  bed=$annodir/sv_bcangenes.bed
+  bed=$annodir/chr19_deletion_mcf10a_mda.10000bp.bed
 fi
 
 cells="MCF10A MCF7 MDAMB231"

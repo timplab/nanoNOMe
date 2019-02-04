@@ -5,7 +5,7 @@ library(tidyverse)
 library(GenomicRanges)
 srcdir=dirname(get_Rscript_filename())
 if (is.na(srcdir)){ srcdir="." }
-source(file.path(srcdir,"methylation_plot_utils.R"))
+source(file.path(srcdir,"../../script/methylation_plot_utils.R"))
 
 root = commandArgs(trailingOnly=TRUE)[1]
 # default path if not provided
@@ -23,6 +23,10 @@ exp.fp=c("data/gm12878/GM12878_rnaseq_1.tsv",
          "data/gm12878/GM12878_rnaseq_2.tsv")
 # output pdf name
 plotpath = "plots/GM12878_methylation_chromatin_by_expression.pdf"
+
+#read in tss db
+tss.gr=load_db(tss.fp)
+tss.gr$id = sapply(strsplit(tss.gr$id,"[.]"),"[[",1)
 
 # expression data parsing
 qtiles=seq(0,1,.25)
@@ -44,10 +48,6 @@ exp.qtile=exp%>%select(-fpkm)%>%
     spread(rep,qtile)%>%filter(`1`==`2`)%>%mutate(qtile=`1`)
 exp.fpkm=exp[which(exp$id %in% exp.qtile$id),] %>%
     group_by(id,transcripts,qtile)%>%summarize(fpkm=mean(fpkm))
-
-#read in tss db
-tss.gr=load_db(tss.fp)
-tss.gr$id = sapply(strsplit(tss.gr$id,"[.]"),"[[",1)
 
 # merge with tss.gr
 tss.gr=tss.gr[which(tss.gr$id %in% exp.fpkm$id)]
@@ -97,8 +97,8 @@ plotter <- function(dat.plt,plotpath) {
         theme(legend.position="right")
     # scatter plot in one
     g.one = ggplot(dat.plt,aes(y=cpg,x=gpc))+theme_bw()+
-        geom_point(aes(color=factor(qtile)),size=0.1,alpha=0.5)+
-        lims(x=c(0,1),y=c(0,1))+
+        geom_point(aes(color=factor(qtile)),size=0.5,alpha=0.5)+
+        lims(y=c(0,1))+
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank(),
               axis.text = element_text(color="black"),
@@ -106,8 +106,8 @@ plotter <- function(dat.plt,plotpath) {
               plot.title = element_text(size=10,hjust=0))+
         labs(y="CpG methylation",x="GpC accessibility",
              title="Chromatin state by expression",
-             color="quartile") +
-        coord_fixed()
+             color="quartile")
+
     # density
     dat.gather = gather(dat.plt,calltype,freq,-qtile)
     g.density = g +
@@ -117,7 +117,7 @@ plotter <- function(dat.plt,plotpath) {
         labs(y="Density",x="Methylation frequency",
              title="Methylation density by expression")
     # print
-    pdf(plotpath,useDingbats=F,height=4,width=6)
+    pdf(plotpath,useDingbats=F,height=5,width=8)
     print(g.one)
     print(g.2d)
     print(g.density)
@@ -161,5 +161,5 @@ dat.plt = dat.spread[-match(tss.cgi$id,tss.gr$id),] %>%
 minnum = min(table(dat.plt$qtile))
 dat.plt=dat.plt%>%group_by(qtile)%>%
     do(sample_n(.,minnum))
-plotpath=file.path(plotdir,"GM12878_nonCGI_CpGvsGpCvsExp_scatter.pdf")
+
 plotter(dat.plt,plotpath)

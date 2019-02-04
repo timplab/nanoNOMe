@@ -4,9 +4,9 @@ library(tidyverse)
 library(ggridges)
 library(ggplot2)
 
-plotdir="/home/isac/Dropbox/Data/Nanopore/171120_ecoliStandards/plots"
+plotdir="/home/isac/Dropbox/Data/nome-seq/reproduce/plots"
 pd = tibble(mod=c("cpg","gpc"),
-            fpath=paste0("/home/isac/Code/nanopolish-isac/etc/r9-models/r9.4_450bps.",
+            fpath=paste0("/home/isac/Code/nanopolish/etc/r9-models/r9.4_450bps.",
                          mod,".6mer.template.model"))
 
 raw.list=lapply(seq_along(pd$fpath),function(i){
@@ -59,12 +59,12 @@ g.ridges = g + geom_density_ridges(aes(x=diff,y=factor(mind)),alpha=0.1)+
     xlim(c(-10,10))+
     labs(x="Unmethylated-Methylated (pA)",
          y="Position of 5m-C")
-g.box = g + geom_boxplot(aes(x=factor(mind),y=diff,color=mod))+
+g.box = g + geom_boxplot(aes(x=factor(mind),y=diff,color=mod),outlier.size=0.5)+
     ylim(c(-10,10))+
     labs(y="Unmethylated-Methylated (pA)",
          x="Position of 5m-C")
 
-pdf(file.path(plotdir,"180822_kmer_distro.pdf"),width=5,height=5)
+pdf(file.path(plotdir,"methylation_model_kmer_distro.pdf"),useDingbats=T,width=4,height=4)
 print(g.ridges)
 print(g.box)
 dev.off()

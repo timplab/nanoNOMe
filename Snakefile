@@ -11,11 +11,13 @@ include:
   smkdir+"frequency_analysis.smk"
 include:
   smkdir+"nanonome_data_parse.smk"
+include:
+  smkdir+"sv_analysis.smk"
 
 rule parse_downloaded_data:
   input:
     "data/gm12878/GM12878_CTCF.noTSS.center.2000bp.bed",
-    "data/hg38/hg38_genes.TSS.200bp.bed",
+    "data/hg38/hg38_genes.TSS.slop2000bp.bed",
     "data/hg38/hg38_cgi.bed"
 
 rule model_validation:
@@ -35,3 +37,19 @@ rule nanonome_data:
       sample=["GM12878","MCF10A","MCF7","MDAMB231"],
         mod=["cpg","gpc"],
         what=["methylation","methcoverage"])
+
+rule sv_analysis:
+  input:
+    expand("data/bcan/MCF10A_vs_{sample}_SVcomparison_{svtype}_survivor.flank200bp.bed",
+      sample=["MCF7","MDAMB231"],
+      svtype=["del","ins"]),
+    expand("data/bcan/MCF10A_vs_{sample}_SVcomparison_{svtype}_survivor.shuffle.flank200bp.bed",
+      sample=["MCF7","MDAMB231"],
+      svtype=["del","ins"]),
+    expand("data/bcan/MCF10A_vs_{sample}_SVcomparison_tra_survivor.TRAregion200bp.bed",
+      sample=["MCF7","MDAMB231"]),
+    expand("data/bcan/MCF10A_vs_{sample}_SVcomparison_tra_survivor.shuffle.TRAregion200bp.bed",
+      sample=["MCF7","MDAMB231"])
+
+
+    
