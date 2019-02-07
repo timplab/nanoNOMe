@@ -30,7 +30,7 @@ rule make_gm12878_metaplot:
 	output:
 		"plots/{sample}.metaplot.{region}.pdf"
 	shell :
-		"Rscript {params}/script/nanonome_plots.R "
+		"Rscript {params}/scripts/nanonome_plots.R "
 		" metaplotByDistance -c {input.cpg} -g {input.gpc} "
 		"-r {input.region} -o {output} 2> /dev/null"
 
@@ -54,7 +54,7 @@ rule make_mnase_metaplot:
 	output:
 		"plots/{sample}_MNase.metaplot.{region}.pdf"
 	shell:
-		"Rscript {params}/script/mnase_plot.R metaplotByDistance "
+		"Rscript {params}/scripts/mnase_plot.R metaplotByDistance "
 		"-i {input} -o {output} 2> /dev/null"
 
 # need to work on

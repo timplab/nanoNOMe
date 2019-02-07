@@ -15,7 +15,7 @@ rule survivor_to_bed:
 	output:
 		"{dir}/{sample1}_vs_{sample2}_SVcomparison_{svtype}_survivor.bed"
 	shell:
-		"python {params}/script/parse_survivor.py {wildcards.svtype} "
+		"python {params}/scripts/parse_survivor.py {wildcards.svtype} "
 		"-s {input} --one {wildcards.sample1} "
 		"--two {wildcards.sample2} > {output}"
 

@@ -19,7 +19,7 @@ rule make_roc_curve:
 		log="plots/{sample}_ROC_{methylation}_methylation_{model}_model.log",
 		plot="plots/{sample}_ROC_{methylation}_methylation_{model}_model.pdf"
 	shell:
-		"python -u {params}/script/test_methylmodel.py roc -v "
+		"python -u {params}/scripts/test_methylmodel.py roc -v "
 		"--model {wildcards.model} --methylated {input.meth} "
 		"--unmethylated {input.unmeth} -o {output.plot} 2> {output.log}"
 

@@ -55,7 +55,7 @@ rule parse_hg38_genome:
 		gs = "data/hg38/hg38_genomesize.txt"
 	shell:
 		"gunzip -c {input} | "
-		"python {params.codedir}/util/fasta_remove_alt.py "
+		"python {params.codedir}/scripts/fasta_remove_alt.py "
 		"> {output.fa} && "
 		"samtools faidx {output.fa} && "
 		"cut -f1,2 {output.fa}.fai > {output.gs}"
@@ -126,7 +126,7 @@ rule parse_chip:
 		"bedtools closest -a stdin -b {input.tss} -d | "
 		"awk 'OFS=\"\t\"{{ if($NF>2000)print $1,$2,$3 }}' " # remove features closer than 2kb of TSS
 		"> {output.sites} && "
-		"python {params}/util/bed_getcenter.py "
+		"python {params}/scripts/bed_getcenter.py "
 		"{output.sites} | sort -k1,1 -k2,2n > {output.center}"
 
 
