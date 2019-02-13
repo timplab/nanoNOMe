@@ -27,7 +27,7 @@ def parseArgs() :
     parser.add_argument('-b','--bam',type=os.path.abspath,required=True,
             help="bam file - sorted and indexed")
     parser.add_argument('-f','--fasta',type=os.path.abspath,required=False,
-            help="genome fastq file")
+            help="genome fastq file, needed for minimap2 reads (no MD tag)")
     parser.add_argument('-c','--cpg',type=os.path.abspath,required=True,
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-g','--gpc',type=os.path.abspath,required=False,
