@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 import os
 import math
 import sys
@@ -8,6 +8,7 @@ import numpy as np
 from collections import namedtuple
 from methylbed_utils import MethRead,bed_to_coord
 import pysam
+from Bio import SeqIO
 import re
 import multiprocessing as mp
 import time
@@ -25,6 +26,8 @@ def parseArgs() :
             help="verbose output")
     parser.add_argument('-b','--bam',type=os.path.abspath,required=True,
             help="bam file - sorted and indexed")
+    parser.add_argument('-f','--fasta',type=os.path.abspath,required=False,
+            help="genome fastq file")
     parser.add_argument('-c','--cpg',type=os.path.abspath,required=True,
             help="gpc methylation bed - sorted, bgzipped, and indexed")
     parser.add_argument('-g','--gpc',type=os.path.abspath,required=False,
@@ -97,12 +100,14 @@ def convert_nome(bam,cpg,gpc) :
     bam_cpg = change_sequence(bam,cpg,"cpg") 
     return change_sequence(bam_cpg,gpc,"gpc")
 
-def reset_bam(bam) :
+def reset_bam(bam,genome_dict) :
     try : 
         refseq = bam.get_reference_sequence()
     except ValueError :
-        # MD tag not present probably means bam already fed through nanopolish phase-read
-        refseq = bam.query_alignment_sequence
+        # MD tag not present in minimap2
+        refseq = str(genome_dict[bam.reference_name][ 
+                bam.reference_start:
+                bam.reference_end])
     bam.query_sequence = refseq.upper()
     bam.cigarstring = ''.join([str(len(refseq)),"M"])
     return bam
@@ -143,7 +148,7 @@ def change_sequence(bam,calls,mod="cpg") :
     bam.query_sequence = ''.join(seq)
     return bam
 
-def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
+def convertBam(bampath,genome_dict,cfunc,cpgpath,gpcpath,window,verbose,q) :
     if verbose : print("reading {} from bam file".format(window),file=sys.stderr)
     with pysam.AlignmentFile(bampath,"rb") as bam :
         bam_entries = [x for x in bam.fetch(region=window)]
@@ -164,7 +169,7 @@ def convertBam(bampath,cfunc,cpgpath,gpcpath,window,verbose,q) :
         except KeyError : 
             continue
         i += 1
-        newbam = reset_bam(bam)
+        newbam = reset_bam(bam,genome_dict)
         convertedbam = cfunc(newbam,cpg,gpc)
         q.put(convertedbam.to_string())
     if verbose : print("converted {} bam entries in {}".format(i,window),file=sys.stderr)
@@ -175,6 +180,12 @@ def main() :
         windows = [args.window]
     else : 
         windows = [ bed_to_coord(x) for x in args.regions ]
+    # read in fastq
+    genome_dict = dict()
+    if args.fasta :
+        with open(args.fasta) as handle :
+            for record in SeqIO.parse(handle,"fasta") :
+                genome_dict[record.id] = record.seq
     # initialize mp
     manager = mp.Manager()
     q = manager.Queue()
@@ -186,7 +197,7 @@ def main() :
     if args.gpc is None : converter = convert_cpg
     else : converter = convert_nome
     jobs = [ pool.apply_async(convertBam,
-        args = (args.bam,converter,args.cpg,args.gpc,win,args.verbose,q))
+        args = (args.bam,genome_dict,converter,args.cpg,args.gpc,win,args.verbose,q))
         for win in windows ]
     output = [ p.get() for p in jobs ]
     # done
