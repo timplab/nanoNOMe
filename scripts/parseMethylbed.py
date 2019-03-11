@@ -84,11 +84,11 @@ class SiteStats:
     def printFreq(self,context,out):
         if self.num_reads == 0 : return # all calls here were bad
         if context == "CG" :
-            tricontext=self.seq[motifidx-1:motifidx+2]
             motifidx=self.seq.index(context,1)
+            tricontext=self.seq[motifidx-1:motifidx+2]
         elif context == "GC" :
-            tricontext=self.seq[motifidx:motifidx+3]
             motifidx=self.seq.index(context)
+            tricontext=self.seq[motifidx:motifidx+3]
         motifcontext=self.seq[motifidx:motifidx+2]
         print("\t".join([str(x) for x in [
             self.rname,
