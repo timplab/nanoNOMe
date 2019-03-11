@@ -83,12 +83,13 @@ class SiteStats:
         self.num_methylated+=methcall.call
     def printFreq(self,context,out):
         if self.num_reads == 0 : return # all calls here were bad
-        motifidx=self.seq.index(context)
-        motifcontext=self.seq[motifidx:motifidx+2]
         if context == "CG" :
             tricontext=self.seq[motifidx-1:motifidx+2]
+            motifidx=self.seq.index(context,1)
         elif context == "GC" :
             tricontext=self.seq[motifidx:motifidx+3]
+            motifidx=self.seq.index(context)
+        motifcontext=self.seq[motifidx:motifidx+2]
         print("\t".join([str(x) for x in [
             self.rname,
             self.pos+1,
@@ -116,10 +117,11 @@ def getFreq(args,in_fh):
         sitekeys=sorted(sites.keys())
 #        print(sitekeys)
         try : 
-        # print everything in sites if chromosome is different
+            # print everything in sites if chromosome is different
             if read.rname != sites[sitekeys[0]].rname :
                 printind=len(sitekeys)
             else : 
+                # get index of new position
                 printind=bisect.bisect_left(sitekeys,read.keys[0])
         except IndexError : 
             printind=0
