@@ -8,7 +8,7 @@ def parseArgs():
     parser.add_argument('-c', '--call-threshold', type=float, required=False, default=2.5,
             help="absolute value of threshold for methylation call (default : 2.5)")
     parser.add_argument('-i', '--input', type=str, required=False,help="input methylation tsv file (default stdin)")
-    parser.add_argument('-m', '--mod',type=str,required=False,default='cpg',help="modification motif; one of cpg,gpc")
+    parser.add_argument('-m', '--mod',type=str,required=False,default='cpg',help="modification motif; one of cpg,gpc,dam")
     parser.add_argument('-e', '--exclude',type=str,required=False,help="motif to exclude from reporting")
     parser.add_argument('-w', '--window',type=int,required=False,default=2,
             help="number of nucleotides to report on either side of called nucleotide")
@@ -98,6 +98,10 @@ def summarizeMeth(args):
     elif args.mod=="gpc" :
         args.offset += 1  # coordinate of C is +1 since G comes before C
         motif="GC"
+    elif args.mod=="dam" :
+        args.offset += 1  # coordinate of C is +1 since G comes before C
+        motif="GATC"
+        args.window += 2
     # read in data
     if args.input:
         in_fh = open(args.input)
