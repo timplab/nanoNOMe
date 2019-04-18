@@ -2,10 +2,10 @@
 library(getopt)
 srcdir=dirname(get_Rscript_filename())
 if (is.na(srcdir)){ srcdir="." }
-library(tidyverse)
+source(file.path(srcdir,"../../scripts/ggplot_theme.R"))
 library(GenomicRanges)
 library(VariantAnnotation)
-source(file.path(srcdir,"../../script/methylation_plot_utils.R"))
+source(file.path(srcdir,"../../scripts/methylation_plot_utils.R"))
 
 cores=detectCores()
 root="/kyber/Data/Nanopore/projects/nanonome/analysis"
@@ -61,6 +61,19 @@ for (i in c(1,2)){
         shuffle.gr$reg = "shuffle"
         reg.gr = c(bed.gr,shuffle.gr)
 
+        ## distance
+        reg.up = reg.gr[which(reg.gr$updown == 1)]
+        reg.down = reg.gr[which(reg.gr$updown == 2)]
+        idx = match(paste(reg.down$id,reg.down$score,reg.down$reg),paste(reg.up$id,reg.up$score,reg.up$reg))
+        reg.upmatch = reg.up[idx]
+        dists = tibble(id = reg.upmatch$id,
+                       cell = reg.upmatch$score,
+                       dist = distance(reg.upmatch,reg.down))
+        bins=c(0,500,1e3,1e4,1e5,Inf)
+        levels=c("<500","500-1000","1e3-1e4","1e4-1e5",">1e5")
+        dists$dist = cut(x=dists$dist,breaks=bins,labels=levels)
+        dists$dist[is.na(dists$dist)] = levels[5]
+
         ## which into what
         ovl = findOverlaps(dat.gr,reg.gr)
         dat.ovl = bind_cols(dat[queryHits(ovl),],
@@ -85,33 +98,35 @@ for (i in c(1,2)){
             dplyr::select(-`1`,-`2`) %>%
             spread(cell,del) %>% na.omit()
 
+        ## add distance
+        idx = match(paste(dat.cell$id,dat.cell$svcell),paste(dists$id,dists$cell))
+        dat.cell$dist = dists$dist[idx]
+
         ## plot
         scatter <- function(data){
-            ggplot(data,aes(x=sampleone,y=sampletwo))+
-                facet_wrap(reg~svcell) +
+            ## linear regression
+            lm.tb = data %>%
+                group_by(calltype,reg) %>%
+                do(model = lm(sampletwo ~ sampleone,data=.))
+            lm.tb = lm.tb %>%
+                mutate(rsq = summary(model)$r.squared,
+                       slope = summary(model)$coefficients[,"Estimate"]["sampleone"],
+                       intercept = summary(model)$coefficients[,"Estimate"]["(Intercept)"],
+                       regrsq = paste(reg,":",round(rsq,2)),
+                       svcell = data$svcell[1])
+            data$regrsq = lm.tb$regrsq[match(data$reg,lm.tb$reg)]
+            ggplot(data,aes(x=sampleone,y=sampletwo,color=dist))+
+                facet_wrap(regrsq~svcell) +
                 geom_point(alpha=0.5)+
-                coord_fixed()+
-                theme_bw()+
-                theme(panel.grid.major = element_blank(),
-                      panel.grid.minor = element_blank(),
-                      axis.text = element_text(color="black"),
-                      strip.background = element_blank(),
-                      panel.border = element_rect(colour="black"))
-                
+                geom_abline(mapping=aes(slope=slope,intercept=intercept),
+                            data=lm.tb,linetype=2)+
+                coord_fixed()
         }
         boxplot <- function(data){
             ggplot(data,aes(x=reg,y=del))+
                 facet_wrap(cell~svcell)+
-                geom_boxplot()+
-                theme_bw()+
-                theme(panel.grid.major = element_blank(),
-                      panel.grid.minor = element_blank(),
-                      axis.text = element_text(color="black"),
-                      strip.background = element_blank(),
-                      panel.border = element_rect(colour="black"))
-
+                geom_boxplot()
         }
-
         scatter.cpg = scatter(dat.cell[which(dat.cell$calltype=="cpg"),]) +
             lims(x=c(-1,1),y=c(-1,1))+ggtitle("cpg")
         scatter.gpc = scatter(dat.cell[which(dat.cell$calltype=="gpc"),]) +
@@ -128,4 +143,5 @@ for (i in c(1,2)){
         print(box.gpc)
         dev.off()
     }
+
 }

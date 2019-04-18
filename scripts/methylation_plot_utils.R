@@ -1,5 +1,7 @@
 #!/usr/bin/Rscript
 # methylation utils
+library(Rsamtools)
+library(GenomicRanges)
 
 # data reading
 read_data <- function(infp){
@@ -31,22 +33,25 @@ tabix <- function(querypath,dbpath,col_names=NULL,verbose=TRUE){
             # input region is a GRanges object
             if (verbose) cat(paste0("reading regions defined by GRanges object",
                                     " in ",querypath,"\n"))
-            strand(dbpath) = "*"
-            regions = gsub(":.,","",toString(dbpath))
-            command = paste("tabix",querypath,regions)
+##            strand(dbpath) = "*"
+##            regions = gsub(":.,","",toString(dbpath))
+##            command = paste("tabix",querypath,regions)
+            raw.list = scanTabix(querypath,dbpath)
+            region.raw = do.call(c,raw.list)
         } else {
             if (verbose) cat(paste0("reading regions defined by ",
                                     dbpath," in ",querypath,"\n"))
             command=paste("tabix",querypath,"-R",dbpath)
+            if (verbose) cat(paste0(substr(command,1,500),"...\n"))
+            region.raw=system(command,intern=TRUE)
         }
-        if (verbose) cat(paste0(substr(command,1,500),"...\n"))
-        region.raw=system(command,intern=TRUE)
         if (verbose) cat("converting to tibble\n")
         region=do.call(rbind,strsplit(region.raw,"\t"))
         region.tb=as.tibble(region)
         if (dim(region.tb)[1] == 0){ return(NA) }
         if (!is.null(col_names)) colnames(region.tb)=col_names
-        region.tb %>% type_convert()
+        region.tb %>% type_convert() %>%
+            distinct()
 }
 
 mbedByCall <- function(mbed,smooth=FALSE,ns=10,h=50,verbose=T){
