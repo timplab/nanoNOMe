@@ -27,13 +27,15 @@ def parseArgs():
     parser.add_argument('-i', '--input', type=os.path.abspath, required=True,
             help="read-level methylation bed file")
     parser.add_argument('-r','--regions',type=argparse.FileType('r'),
-            required=False,default=sys.stdin, help="windows in bed format (default stdin)")
-    parser.add_argument('-o', '--out', type=str, required=False,
-            default="heatmap.pdf",help="output file path (default heatmap.pdf)")
-    parser.add_argument('-w','--window',type=int,required=False,default=20,
-            help="binning window for calculating methylation")
-    parser.add_argument('-f','--frequency',type=float,required=False,default=0.1,
-            help="frequency threshold")
+            required=False,default=sys.stdin, help="regions in bed format (default stdin)")
+    parser.add_argument('-o', '--out', type=argparse.FileType('w'), required=False,
+            default=sys.stdout,help="output file path (default stdout)")
+#    parser.add_argument('-o', '--out', type=str, required=False,
+#            default="heatmap.pdf",help="output file path (default heatmap.pdf)")
+#    parser.add_argument('-w','--window',type=int,required=False,default=10,
+#            help="binning window for calculating methylation")
+    parser.add_argument('-c','--cov',type=float,required=False,default=10,
+            help="coverage threshold")
     args = parser.parse_args()
     try : 
         args.out
@@ -180,9 +182,29 @@ class HeatmapRegion :
 def makekey(region):
     return ".".join([str(x) for x in region.items])
 
-def get_mdistance(datapath,reg,thr=0.1,window=10,verbose=False) :
-    data = tabix(datapath,reg)
-    coords = bed_to_coord(reg)
+def calculate_distances(nlist,start,end) :
+    range_idx = np.where((nlist>=start) & (nlist<=end))[0]
+    if len(range_idx) == 0 or len(nlist) <= 1 : return 0,list()
+    dlist = np.zeros(len(range_idx))
+    i = 0
+    if range_idx[0] == 0 :
+        dlist[0] = nlist[1]-nlist[0]
+        range_idx = range_idx[1:]
+        i = 1
+    if len(range_idx) == 0 : return 1,dlist
+    if range_idx[-1] == len(nlist)-1:
+        dlist[-1] = nlist[-1]-nlist[-2]
+        range_idx = range_idx[:-1]
+    if len(range_idx) == 0 : return 1,dlist
+    for j in range_idx :
+        diff1 = nlist[j]-nlist[j-1]
+        diff2 = nlist[j+1]-nlist[j]
+        dlist[i] = max(diff1,diff2)
+        i += 1
+    return 1,dlist
+
+def get_mdistance(datapath,coords,covthr=10,verbose=False) :
+    data = tabix(datapath,coords)
     chrom,start,end = coord_to_bed(coords)
     rlist = list()
     for line in data :
@@ -190,23 +212,50 @@ def get_mdistance(datapath,reg,thr=0.1,window=10,verbose=False) :
         if ( read.start <= start and
                 read.end >= end ) :
             rlist.append(read)
-#    if verbose : 
-#        print("{} reads covering the entire region out of total {} in the region".format(
-#            heat.totreads,len(data)),file=sys.stderr)
-#    heat.makeMatrix(window)
-#    g = heat.plot(thr,window)
-#    if verbose : print(heat.name,file=sys.stderr)
-    g = len(rlist)
-    return g
+    if len(rlist) < covthr : 
+        if verbose : 
+            print("not enough coverage for {}".format(coords),file=sys.stderr)
+        return
+    if verbose : 
+        print("calculating distances in {} reads for {}".format(len(rlist),coords),file=sys.stderr)
+    distlist = list()
+    numreads = 0
+    for read in rlist :
+        methind = np.where(read.callarray[:,1]==1)[0]
+        methpos = read.callarray[methind,0]
+        i,dists = calculate_distances(methpos,start,end)
+        numreads += i
+        [ distlist.append(x) for x in dists ]
+    if numreads < covthr :
+        if verbose : 
+            print("not enough reads with methylation data for {}".format(coords),file=sys.stderr)
+        return
+    if verbose : 
+        print("calculated distances in {} reads for {}".format(len(rlist),coords),file=sys.stderr)
+    return distlist
 
 if __name__=="__main__":
     args=parseArgs()
     glist = list()
+    print("distance\tfrequency\tregion",file=args.out)
+    dists_all = list()
+    num_region = 0
     for reg in args.regions :
-        g = get_mdistance(args.input,reg,args.frequency,args.window,args.verbose)
-        print(g)
-#        if g is not None : 
-#            glist.append(g)
-#    if args.verbose : print("generating plots",file=sys.stderr)
-#    save_as_pdf_pages([g for x in glist for g in x ],filename=args.out)
-    if args.verbose : print("time elapsed : {} seconds".format(time.time()-start_time),file=sys.stderr)
+        coords = bed_to_coord(reg)
+        distances = get_mdistance(args.input,coords,args.cov,args.verbose)
+        if distances is None : continue
+        if args.verbose : 
+            print("outputting histogram for {}".format(coords),file=sys.stderr)
+        hist = np.histogram(distances,bins="auto")
+        outlist = ["{}\t{}\t{}".format(hist[1][i],hist[0][i],coords)
+                for i in range(len(hist[0]))]
+        [ print(x,file=args.out) for x in outlist ]
+        [dists_all.append(x) for x in distances]
+        num_region += 1
+    if args.verbose : 
+        print("outputting histogram for all regions",file=sys.stderr)
+    hist = np.histogram(dists_all,bins="auto")
+    outlist = ["{}\t{}\t{}".format(hist[1][i],hist[0][i],"all")
+            for i in range(len(hist[0]))]
+    [ print(x,file=args.out) for x in outlist ]
+    if args.verbose : print("time elapsed : {} seconds for {} regions".format(time.time()-start_time,num_region),file=sys.stderr)
