@@ -245,17 +245,17 @@ if __name__=="__main__":
         distances = get_mdistance(args.input,coords,args.cov,args.verbose)
         if distances is None : continue
         if args.verbose : 
-            print("outputting histogram for {}".format(coords),file=sys.stderr)
-        hist = np.histogram(distances,bins="auto")
-        outlist = ["{}\t{}\t{}".format(hist[1][i],hist[0][i],coords)
-                for i in range(len(hist[0]))]
+            print("outputting counts of distances for {}".format(coords),file=sys.stderr)
+        counts = np.unique(distances,return_counts=True)
+        outlist = ["{}\t{}\t{}".format(counts[0][i],counts[1][i],coords)
+                for i in range(len(counts[0]))]
         [ print(x,file=args.out) for x in outlist ]
         [dists_all.append(x) for x in distances]
         num_region += 1
     if args.verbose : 
-        print("outputting histogram for all regions",file=sys.stderr)
-    hist = np.histogram(dists_all,bins="auto")
-    outlist = ["{}\t{}\t{}".format(hist[1][i],hist[0][i],"all")
-            for i in range(len(hist[0]))]
+        print("outputting counts for all regions",file=sys.stderr)
+    counts = np.unique(dists_all,return_counts=True)
+    outlist = ["{}\t{}\t{}".format(counts[0][i],counts[1][i],"all")
+            for i in range(len(counts[0]))]
     [ print(x,file=args.out) for x in outlist ]
     if args.verbose : print("time elapsed : {} seconds for {} regions".format(time.time()-start_time,num_region),file=sys.stderr)
