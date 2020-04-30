@@ -1,0 +1,1194 @@
+---
+title: "nanoNOMe single-read CTCF "
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(UpSetR)
+library(mclust)
+
+
+```
+
+```{r functions, include = F}
+getQQ <- function(one,two,qs = seq(0,1,0.01)) {
+  tibble(one = quantile(one,qs,na.rm = T),
+         two = quantile(two,qs,na.rm = T),
+         qunatile = qs)
+}
+```
+
+
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome/pooled"
+subdir <- file.path(nanonomedir,"../regs")
+plotdir <- "/uru/Data/Nanopore/projects/nanonome/plots"#"~/Dropbox/Data/nome-seq/version3_guppy3/plots/readlevel"
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/readlevel"
+cpg_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.cpg.mfreq.txt.gz")
+gpc_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.gpc.mfreq.txt.gz")
+cpg_bs_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.cpg.BSseq.rds")
+gpc_bs_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.gpc.BSseq.rds")
+# mbed
+mbed_path <- file.path(nanonomedir,"pooled/GM12878_nanoNOMe.cpggpc.meth.bed.gz")
+# database
+ctcf.chip.fp <- "/uru/Data/Nanopore/projects/nanonome/database/GM12878_CTCF_ChIP_peaks.bed.gz"
+```
+
+```{r read_data, eval = T, include = FALSE, cache=F }
+## first cpg data comparisons
+# read data
+if (! file.exists(cpg_bs_fp)){
+  gpc <- read.bismark(gpc_fp)
+  cpg <- read.bismark(cpg_fp)
+  saveRDS(cpg,cpg_bs_fp)
+  saveRDS(gpc,gpc_bs_fp)
+} else {
+  cpg <- readRDS(cpg_bs_fp)
+  gpc <- readRDS(gpc_bs_fp)
+}
+
+cpg.gr <- granges(cpg)
+gpc.gr <- granges(gpc)
+
+```
+```{r annotation, eval = T, include = FALSE, cache=F }
+ctcf.all.fp <- "/dilithium/Data/Nanopore/projects/nomeseq/analysis/annotations/CTCF/CTCFBSDB_allcomp_hg38.center.noTSS.bed"
+ctcf.gm.fp <- "/dilithium/Data/Nanopore/projects/nomeseq/analysis/annotations/gm12878/GM12878_CTCF_ctcfbsdb_allcomp.center.noTSS.bed"
+
+cnames <- c("chrom","start","end")
+ctcf.all <- GRanges(read_tsv(ctcf.all.fp,col_names = cnames) %>% mutate(start = start + 1))
+ctcf.gm <- GRanges(read_tsv(ctcf.gm.fp,col_names = cnames) %>% mutate(start = start + 1))
+
+# find sites *not* enriched in GM
+ctcf.nogm <- ctcf.all[! overlapsAny(ctcf.all,ctcf.gm)]
+## GM CTCF
+#ctcf.center <- GRanges(read_tsv("/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878/GM12878_CTCF.noTSS.center.bed",
+#                             col_names = c("chrom","start","end")))
+
+centers <- bind_rows(list(
+    Bound = as_tibble(ctcf.gm),
+    Unbound = as_tibble(ctcf.nogm)),
+  .id = "type") %>%
+  dplyr::select(seqnames,start,end,type) %>%
+  distinct()
+centers.gr <- GRanges(centers)
+regs <- resize(centers.gr,width = 2001, fix = "center")
+
+
+```
+
+```{r regs, eval = T, include = FALSE, cache=F }
+nregs <- 1000
+regs.fp <- file.path(subdir,paste0("GM12878_CTCF_centers.sub.",nregs,"pergroup.bed"))
+
+if (! file.exists(regs.fp)){
+  centers.sub <- centers %>%
+    group_by(type) %>%
+    sample_n(nregs)
+  regs.sub <- centers.sub %>%
+    mutate(end = start + 1000, start = start - 1001) %>%
+    arrange(seqnames,start,end)
+  write_tsv(regs.sub,regs.fp,col_names = F)
+} else {
+  bedcnames <- c("seqnames","start","end","type")
+  regs.sub <- read_tsv(regs.fp,col_names = bedcnames)
+  centers.sub <- regs.sub %>%
+    mutate(start = (start + end)/2, end = start)
+}
+
+# chip
+# chip-seq peaks
+cnames <- c("chrom","start","end","name","score","strand","signal","pval","qval","peak")
+chip <- read_tsv(ctcf.chip.fp,col_names = cnames)
+# 50 bp from center
+side <- 25
+regs.gr <- GRanges(regs.sub %>% mutate( start = start - side, end = end + side))
+chip.gr <- GRanges(chip)
+ovl <- findOverlaps(regs.gr,chip.gr)
+regs.sub$signal <- NA
+regs.sub$qval <- NA
+regs.sub$signal[queryHits(ovl)] <- chip$signal[subjectHits(ovl)]
+regs.sub$qval[queryHits(ovl)] <- chip$qval[subjectHits(ovl)]
+```
+
+# first check bulk
+
+```{r ctcf, eval = T, include = FALSE, cache=F }
+covthr <- 100
+# 400 bp around TSS
+bulk_regs <- resize(centers.gr,width = 401, fix = "center")
+cpg.regs <- tibble(freq = getMeth(cpg,bulk_regs,"raw","perRegion")[,1],
+                   cov = getCoverage(cpg,bulk_regs,"Cov","perRegionTotal")[,1]) %>%
+  bind_cols(as_tibble(regs)) %>%
+  na.omit() %>%
+  filter(cov > covthr) %>%
+  mutate(what = "cpg")
+gpc.regs <- tibble(freq = getMeth(gpc,bulk_regs,"raw","perRegion")[,1],
+                   cov = getCoverage(gpc,regs,"Cov","perRegionTotal")[,1]) %>%
+  bind_cols(as_tibble(regs)) %>%
+  na.omit() %>%
+  filter(cov > covthr) %>%
+  mutate(what = "gpc")
+dat.regs <- bind_rows(cpg.regs,gpc.regs) %>%
+  dplyr::select(-cov) %>%
+  spread(what,freq) %>%
+  na.omit()
+
+# 2000 bp meta
+bulk_meta_regs <- resize(centers.gr,width = 2001, fix = "center")
+gpc.meta <- gpc[overlapsAny(gpc,bulk_meta_regs),]
+# get meth
+m.meta <- tibble( m = getCoverage(gpc.meta,type="M", what = "perBase")[,1],
+        cov = getCoverage(gpc.meta,type="Cov",what = "perBase")[,1]) %>%
+  bind_cols(as_tibble(granges(gpc.meta)))
+# find center
+gpcmeta.gr <- granges(gpc.meta)
+ovl <- findOverlaps(gpcmeta.gr,bulk_meta_regs)
+gpcmeth.tb <- m.meta[queryHits(ovl),] %>%
+  mutate(center = start(centers.gr)[subjectHits(ovl)],
+         type = centers.gr$type[subjectHits(ovl)],
+         dist = start - center,
+         meth = m, unmeth = cov - meth)  %>%
+  group_by(type)
+gpcmeth.list <- gpcmeth.tb %>% group_split()
+labs <- group_keys(gpcmeth.meta) %>% .$type
+names(gpcmeth.list) <- labs
+gpcmeth.meta <- bind_rows(lapply(gpcmeth.list,aggregate_methylation),.id = "type")
+  
+
+```
+
+
+```{r plot_pairwise, eval = T, echo = F, fig.height=3, fig.width=6, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- wes_palette("Rushmore1")
+plotpath <- file.path(plotdir,"GM12878_CTCF_bulk_pairwise.pdf")
+ggplot(dat.regs,aes(x = gpc, y = cpg)) +
+  facet_wrap(~type) +
+  geom_point(alpha = 0.2) +
+  scale_color_manual(values = pal[4:1]) +
+  lims( x = c(0,1), y = c(0,1))
+```
+```{r plot_bulk_meta, eval = T, echo = F, fig.height=2.5, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- pal_npg("nrc")(10)
+pair_pal <- c(pal[4],pal[1])
+plotpath <- file.path(plotdir,"GM12878_CTCF_metaplot_bound_vs_unbound.pdf")
+pdf(plotpath,width = 4, height = 2.5, useDingbats = F)
+ggplot(gpcmeth.meta,aes(x = dist, y = freq, color = type)) +
+  geom_line() +
+  lims( y = c(0,1)) +
+  scale_color_manual(name = "State",values = pair_pal) +
+  labs( x = "Distance from CTCF Binding Motif", y = "Aggregated\nMethylation Frequency")
+dev.off()
+```
+# single-read 
+
+```{r single_read_region, eval = T, include = FALSE, cache=F }
+
+sub.fp = file.path(subdir,paste0("GM12878_nanoNOMe.ctcf_regs",nregs,"pergroup.cpggpc.meth.bed"))
+env.list <- list(
+  bed = regs.fp,
+  sub = sub.fp
+)
+do.call(Sys.setenv,env.list)
+
+```
+
+```{bash single_read_subset}
+export PATH=$HOME/Code/miniconda3/bin:$PATH
+mbed="/uru/Data/Nanopore/projects/nanonome/pooled/mbed/GM12878_nanoNOMe.cpggpc.meth.bed.gz"
+
+#tabix $mbed -R $bed > $sub
+if [ ! -e $sub ]; then
+  tabix $mbed -R $bed > $sub
+fi
+```
+
+
+```{r single_read, eval = T, include = FALSE, cache=F }
+# fetch single read data in this region
+reads <- tabix_mbed(env.list$sub,extcol = "motif",by = "read")
+# separate by mod
+reads.cpg <- reads[reads$motif == "CG",]
+reads.gpc <- reads[reads$motif == "GC",]
+# remove fully methylated gpc reads
+reads.gpc <- remove_fully_methylated(reads.gpc)
+
+```
+# get calls, smooth gc, and add distance
+
+```{r single_read_parse, eval = T, include = FALSE, cache=F }
+cgdist.list <- list()
+gcdist.list <- list()
+for (i in seq(nrow(regs.sub))) {
+  print(i)
+  reg <- regs.sub[i,]
+  center <- (reg$start + reg$end + 1)/2
+  # subset reads overlapping this region
+  cg.reg <- reads.cpg %>%
+    filter(chrom == reg$seqnames , start <= reg$start, end >= reg$end)
+  gc.reg <- reads.gpc %>%
+    filter(chrom == reg$seqnames , start <= reg$start, end >= reg$end)
+  cgcalls <- NA 
+  gccalls <- NA
+  if (nrow(cg.reg) != 0) {
+    # fix calls
+    cgcalls <- mbedByCall(cg.reg,verbose = F) %>%
+      redo_mcall(1.5) %>%
+      mutate(type = reg$type, seqnames = reg$seqnames, regstart = reg$start, regend = reg$end)
+    # distance from center
+    cgcalls$distance <- cgcalls$start - center
+  }
+  if (nrow(gc.reg) != 0) {
+    # fix calls
+    gccalls <- mbedByCall(gc.reg,verbose = F) %>%
+      redo_mcall(1) 
+    # smooth
+    calls.reg <- gccalls %>%
+      group_by(qname)
+    calls.list <- calls.reg %>% 
+      group_split(keep = T)
+    smooth.list <- lapply(calls.list,smoothCalls,reg = reg)
+    calls.smooth <- bind_rows(smooth.list) %>%
+      mutate(type = reg$type, seqnames = reg$seqnames, regstart = reg$start, regend = reg$end)
+    # distance from center
+    calls.smooth$distance <- calls.smooth$start - center
+  }
+  # add labls
+  cgdist.list[[i]] <- cgcalls %>%
+    mutate(lab = paste(qname,chrom,regstart,sep="_"))
+  gcdist.list[[i]] <- calls.smooth %>%
+    mutate(lab = paste(qname,chrom,regstart,sep="_"))
+}
+# remove regions with no reads
+keepi <- intersect(which(!sapply(cgdist.list,function(x){is.null(nrow(x))})),
+  which(!sapply(gcdist.list,function(x){is.null(nrow(x))})))
+cgdist.list <- cgdist.list[keepi] 
+gcdist.list <- gcdist.list[keepi]
+regs.sub <- regs.sub[keepi,]
+centers.sub <- centers.sub[keepi,]
+nrow(regs.sub)
+```
+
+```{r runs, eval = T, include = FALSE, cache=F }
+gcruns.list <- list()
+for (i in seq(nrow(regs.sub))){
+  print(i)
+  reg <- regs.sub[i,]
+  center <- (reg$start + reg$end + 1)/2
+  # smooth
+  smooth.reg <- gcdist.list[[i]]
+  gcruns <- getRuns_fast(smooth.reg) %>%
+    mutate(chrom = reg$seqnames,
+           start_dist = start - center,
+           end_dist = end - center,
+           regstart = reg$start,
+           regend = reg$end,
+           type = reg$type)
+  gcruns.list[[i]] <- gcruns
+}
+gcruns <- bind_rows(gcruns.list)
+# get abs values of distance from binding site
+gcruns.dist <- gcruns %>%
+  mutate(dist = case_when(
+    start_dist <= 0 & end_dist >= 0 ~ 0,
+    start_dist > 0 ~ start_dist,
+    end_dist < 0 ~ abs(end_dist) 
+    ),
+    lab = paste(qname,chrom,regstart,sep="_"),
+    acc = ifelse( values == 0, "Closed","Open")
+  )
+
+```
+
+### how do the run lenghts distribute depending on distance?
+
+First runs righton the binding site
+
+```{r binding_site_runs, eval = T, include = FALSE, cache=F }
+# right at the  binding site
+runs.site <- gcruns.dist %>%
+  filter(dist < 20) %>%
+  mutate(chip = ifelse(type == "Bound","Peak","No Peak"))
+
+# ratio of open vs closed at the binding site
+runs.site %>%
+  group_by(type, acc) %>%
+  distinct(qname) %>%
+  summarize(n = n()) %>%
+  spread(acc,n) %>%
+  mutate(ratio = Closed/Open)
+# approx the same - about 2x closed regions
+```
+```{r binding_site_runs_plot, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- pal_npg("nrc")(10)
+pair_pal <- c(pal[4],pal[1])
+close.den <- density(runs.site %>% filter(values == 0, width < 600) %>% .$width,bw = 20 )
+means <- close.den$x[which(diff(sign(diff(close.den$y))) == -2)]
+plotpath <- file.path(plotdir,"200317_gm_ctcf_bindingsite_runlength_distro.pdf")
+pdf(plotpath,width = 7, height = 2, useDingbats = F)
+ggplot(runs.site ,aes(x = width)) +
+  facet_wrap( ~acc, scales = "free", ncol = 2) +
+  geom_density( alpha = 0.7) +
+  labs( x = "Length of Runs", y = "Density") +
+  scale_fill_manual(name = "State", values = pair_pal) +
+  lims( x = c(0,600))
+ggplot(runs.site ,aes(x = width, fill = chip)) +
+  facet_wrap( ~acc, scales = "free", ncol = 2) +
+  geom_density( alpha = 0.7) + 
+  geom_vline(xintercept = means, linetype = "dashed") +
+  labs( x = "Length of Runs", y = "Density") +
+  scale_fill_manual(name = "CTCF ChIP-seq", values = pair_pal) +
+  theme(
+    strip.text.x = element_text(size = 12),
+    legend.title = element_text(size = 10),
+    legend.background = element_rect(fill = NULL,
+      size = 0.5, linetype = "solid", color = "black")
+    ) +
+  lims( x = c(0,600))
+ggplot(runs.site ,aes(x = width, fill = chip)) +
+  facet_wrap( ~acc, scales = "free", ncol = 2) +
+  geom_bar( alpha = 0.7) +
+  labs( x = "Length of Runs", y = "Density") +
+  scale_fill_manual(name = "CTCF ChIP-seq", values = pair_pal) +
+  theme(
+    strip.text.x = element_text(size = 12),
+    legend.title = element_text(size = 10),
+    legend.background = element_rect(fill = NULL,
+      size = 0.5, linetype = "solid", color = "black")
+    ) +
+  lims( x = c(0,600))
+dev.off()
+```
+Heatmap of runs
+```{r closed_run_heatmap, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+dists <- seq(-1000,1000,10)
+runs.heat <- bind_rows(lapply(dists,function(d){
+  x <- gcruns.dist[gcruns.dist$start_dist <= d & gcruns.dist$end_dist >= d & gcruns.dist$width <= 510,]
+  y <- x %>%
+    group_by(type, width, values) %>%
+    summarize(n = n())
+  # roll mean along width for this distance
+  bind_rows(lapply(seq(0,500),function(s){
+      y[which(y$width >= s & y$width <= s + 10),] %>%
+        group_by(type,values) %>%
+        summarize( n = sum(n)) %>%
+        mutate(width = s)
+    })) %>%
+    mutate(d = d)
+  }))
+runs.heat <- runs.heat %>%
+  mutate(acc = ifelse( values == 1, "Open","Closed"))
+# normalize for each type and value and take every 5 loci
+runs.heat <- runs.heat %>%
+  filter(width%%5 == 0 ) %>%
+  group_by(type,acc)
+heat.list <- runs.heat %>%
+  group_split()
+heat.norm <- bind_rows(lapply(heat.list,function(x){ 
+    totn <- sum(x$n) 
+    x$den <- x$n/totn
+    x
+  }))
+```
+
+```{r closed_run_heatmap_plot, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+require(gridExtra)
+heat_pal <- wes_palette("Zissou1")
+
+plotpath <- file.path(plotdir,"200317_gm_ctcf_chip_runs_heatmap.pdf")
+pdf(plotpath,width = 7, height = 4, useDingbats = F)
+g.closed.bound <- ggplot(heat.norm %>% filter(acc == "Closed", type == "Bound"),aes( x = d, y = width, fill = den )) +
+#  facet_wrap(~type, ncol = 2, labeller = as_labeller(c(Bound="ChIP-seq Peak",Unbound="No Peak"))) +
+  lims(y = c(0,500)) +
+  labs(title = "ChIP-seq Peak",x = "Distance From CTCF Binding Site", y = "Length of Closed Runs") +
+  geom_bin2d(stat = "identity") +
+  scale_fill_gradientn(name = "Density", colors = heat_pal) +
+  theme(
+    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.title = element_text(size = 10), 
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.spacing = unit(1, "lines")
+  ) 
+g.closed.unbound <- ggplot(heat.norm %>% filter(acc == "Closed", type == "Unbound"),aes( x = d, y = width, fill = den )) +
+#  facet_wrap(~type, ncol = 2, labeller = as_labeller(c(Bound="ChIP-seq Peak",Unbound="No Peak"))) +
+  lims(y = c(0,500)) +
+  labs(title = "No Peak",x = "Distance From CTCF Binding Site", y = "Length of Closed Runs") +
+  geom_bin2d(stat = "identity") +
+  scale_fill_gradientn(name = "Density", colors = heat_pal) +
+  theme(
+    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.title = element_text(size = 10), 
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.spacing = unit(1, "lines")
+  ) 
+g.open.bound <- ggplot(heat.norm %>% filter(acc == "Open",type == "Bound"),aes( x = d, y = width, fill = den )) +
+#  facet_wrap(~type, ncol = 2, labeller = as_labeller(c(Bound="ChIP-seq Peak",Unbound="No Peak"))) +
+  lims(y = c(0,500)) +
+  labs(title = "ChIP-seq Peak",x = "Distance From CTCF Binding Site", y = "Length of Open Runs") +
+  geom_bin2d(stat = "identity") +
+  scale_fill_gradientn(name = "Density", colors = heat_pal) +
+  theme(
+    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.title = element_text(size = 10), 
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.spacing = unit(1, "lines")
+  ) 
+g.open.unbound <- ggplot(heat.norm %>% filter(acc == "Open",type == "Unbound"),aes( x = d, y = width, fill = den )) +
+#  facet_wrap(~type, ncol = 2, labeller = as_labeller(c(Bound="ChIP-seq Peak",Unbound="No Peak"))) +
+  lims(y = c(0,500)) +
+  labs(title = "No Peak",x = "Distance From CTCF Binding Site", y = "Length of Open Runs") +
+  geom_bin2d(stat = "identity") +
+  scale_fill_gradientn(name = "Density", colors = heat_pal) +
+  theme(
+    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.title = element_text(size = 10), 
+    legend.text = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.spacing = unit(1, "lines")
+  ) 
+# https://stackoverflow.com/questions/38444635/fixed-graph-size-in-ggplot2
+gA = ggplotGrob(g.closed.bound)
+gB = ggplotGrob(g.open.bound)
+gC = ggplotGrob(g.closed.unbound)
+gD = ggplotGrob(g.open.unbound)
+gA$widths <- gB$widths <- gC$widths <- gD$widths
+grid.arrange(gA, gB,gC, gD)
+dev.off()
+```
+######################################################
+# EM clustering?
+######################################################
+
+```{r em_cluster, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+sites.closed <- runs.site %>% filter(values == 0)
+# remove too big data
+qcutoff <- quantile(sites.closed$width,0.9)
+sites.cluster <- sites.closed %>% filter(width <= qcutoff)
+
+# cluster
+modicl <- mclustICL(sites.cluster$width)
+summary(modicl)
+# pick 4 clusters with V model based on ICL
+mod <- Mclust(sites.cluster$width, G = 4, modelNames = "V")
+summary(mod,parameters = T)
+# save model
+modpath <- file.path(subdir,"200317_gcruns_protein_binding_EM_model.rds")
+saveRDS(mod,modpath)
+
+# assign classification
+sites.cluster <- sites.cluster %>%
+  mutate(cluster = factor(mod$classification),
+    uncertainty = mod$uncertainty)
+table(sites.cluster$uncertainty < 0.25)
+
+# what minimum cutoff for protein binding?
+x <- quantile(sites.cluster$width[sites.cluster$cluster == 1],seq(0,0.2,0.01))
+# based on this, I'm choosing 10 as the cutoff - more or less arbitrary
+
+```
+
+
+```{r predict_class, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# for prediction , use mclust result and then filter for prob > 0.5
+mod <- readRDS(file.path(subdir,"200317_gcruns_protein_binding_EM_model.rds"))
+summary(mod,parameters = T)
+runs.closed <- gcruns.dist %>%
+  filter(values == 0) %>%
+  filter(dist < 20)
+closed.clusters <- predict(mod,runs.closed$width)
+table(closed.clusters$classification)
+runs.closed <- runs.closed %>%
+  ungroup() %>%
+  mutate(i = seq(nrow(runs.closed)),
+    cluster = closed.clusters$classification) %>%
+  rowwise() %>%
+  mutate(prob = closed.clusters$z[i,cluster]) %>%
+  ungroup()
+# 20 bp from binding site center (40 bp window)
+runs.closed <- runs.closed %>%
+  mutate(state = ifelse(cluster == 1,"Protein","Nucleosome"))
+runs.closed %>%
+  group_by(state) %>%
+  summarize(minw = min(width))
+bound <- runs.closed %>%
+  filter(state == "Protein")
+summary(bound$prob)
+summary(bound$width)
+summary(runs.closed$width)
+bound %>%
+  group_by(type)  %>%
+  summarize(n = n())
+gcruns.dist$state <- ifelse(gcruns.dist$lab %in% bound$lab,"Bound","Unbound")
+
+# categorize by EM results
+prot.lab <- bound$lab
+## or rudimentary
+#prot.lab2 <- runs.site %>%
+#  filter(values == 0,width < 80) %>%
+#  .$lab
+
+#length(prot.lab)
+runs.prot <- gcruns.dist %>%
+  mutate(state = ifelse(lab %in% prot.lab, "Occupied","Unoccupied"))
+cgstate.list <- lapply(seq_along(cgdist.list),function(i){
+  print(i)
+  cg <- cgdist.list[[i]]
+  cg$state <- ifelse(cg$lab %in% prot.lab,"Occupied","Unoccupied")
+  cg
+  })
+gcstate.list <- lapply(seq_along(gcdist.list),function(i){
+  print(i)
+  gc <- gcdist.list[[i]]
+  gc$state <- ifelse(gc$lab %in% prot.lab,"Occupied","Unoccupied")
+  gc
+  })
+
+```
+
+```{r em_cluster_plot, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200317_gm_ctcf_cluster.pdf")
+pdf(plotpath,height = 2.5, width = 3, useDingbats = F)
+#plot(modicl)
+#plot(mod,what = "density")
+ggplot(runs.closed,aes(x = width, fill = state)) +
+  geom_histogram(bins = 50) +
+  lims( x = c(0,600)) +
+  labs( x = "Closed Run Length", y = "Count") + 
+  theme(legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.position = "bottom") +
+  coord_cartesian(clip = "off")
+#ggplot(sites.cluster , aes( x = width)) +
+#  geom_density()
+#ggplot(sites.cluster %>% filter(uncertainty < 0.25), aes( x = width, color = cluster)) +
+#  geom_density() +
+#  theme(legend.position = "none")
+dev.off()
+```
+
+```{r fraction_protein_bound, eval = T, include = FALSE, cache=F }
+# fractions of bound vs unbound per site?
+binding.sum <- runs.prot %>%
+  ungroup() %>%
+  group_by(qname,chrom,regstart,type,state) %>%
+  summarize(n = n()) %>%
+  group_by(chrom,regstart,type,state) %>%
+  summarize(n = n()) %>%
+  spread(state, n ) %>%
+  replace(is.na(.),0) %>%
+  mutate(bound_frac = Occupied/(Occupied + Unoccupied),
+    chip = ifelse(type == "Bound","Peak","No Peak")) %>%
+  filter(Occupied + Unoccupied >= 20)
+
+# cluster?
+frac_icl <- mclustICL(binding.sum$bound_frac)
+summary(frac_icl)
+# pick 2 clusters with V model based on ICL
+frac_mod <- Mclust(binding.sum$bound_frac, G = 2, modelNames = "V")
+summary(frac_mod,parameters = T)
+# plot density of the first group
+sim.x <- seq(0,0.2,0.00001)
+norm.den <- tibble(bound_frac = sim.x,
+  den = dnorm(x = sim.x,
+              mean = frac_mod$parameters$mean[1],
+              sd = sqrt(frac_mod$parameters$variance$sigmasq[1])))
+dat.den <- density(binding.sum$bound_frac)
+density.tb <- tibble(x = dat.den$x, y = dat.den$y) %>%
+  filter(x >= 0)
+# normalize the highest density
+ratio <-  max(norm.den$den)/max(density.tb$y)
+norm.den <- norm.den %>%
+  mutate(den = den/ratio)
+# considering those with > 3 sd away from the normal curve as highly bound
+cutoff <- frac_mod$parameters$mean[1]  + 2 * sqrt(frac_mod$parameters$variance$sigmasq[1])
+plotpath <- file.path(plotdir,"200317_gm_ctcf_bound_frac_distro.pdf")
+pdf(plotpath,width = 3, height =2)
+ggplot(binding.sum,aes( x = bound_frac)) +
+  geom_density() +
+  geom_line(data = norm.den,mapping = aes( y = den), linetype = "dashed") +
+  geom_vline(xintercept = cutoff, linetype = "dotted") +
+  coord_cartesian(clip = "off") +
+  labs( x = "Fraction of Bound Reads", y = "Density")
+dev.off()
+
+# assign groups based on the previous determined cutoff
+binding.sum <- binding.sum %>%
+  ungroup() %>%
+  mutate(cluster = ifelse(bound_frac > cutoff, "High","Low"),
+    lab = paste(chrom,regstart,sep="_"))
+binding.sum %>%
+  group_by(type) %>%
+  summarize( min(Occupied), 
+    mean(Occupied),
+    median(Occupied),
+    n = n())
+# add cluser info into regs.sub
+regs.sub <- regs.sub %>%
+  mutate( lab = paste(seqnames,start,sep="_"),
+    bound_frac = binding.sum$bound_frac[match(lab,binding.sum$lab)],
+    cluster = binding.sum$cluster[match(lab,binding.sum$lab)]
+      )
+# correlation with signal
+chip.cor <- cor(regs.sub[,c("signal","bound_frac")] %>% na.omit())[1,2]
+
+binding.sum %>%
+  group_by(chip,cluster) %>%
+  summarize(n =n())
+
+# bin by signal and boxplot fractions
+bin <- 100
+signal.bin <- regs.sub %>%
+  na.omit() %>%
+  filter(qval > -log10(0.01)) %>%
+  mutate(bin = factor(ifelse(signal > 200, 200, round(signal/bin) * bin)))
+
+# upset
+binding.upset <- binding.sum %>%
+  ungroup() %>%
+  mutate(
+    chip_bound = ifelse(type == "Bound",1,0),
+    nanonome_bound = ifelse(cluster == "High",1,0),
+    chip_unbound = ifelse(type == "Unbound",1,0),
+    nanonome_unbound = ifelse(cluster == "Low", 1,0)
+    ) %>%
+  dplyr::select(chip_bound,nanonome_bound,chip_unbound,nanonome_unbound) %>%
+  dplyr::rename(`Chip-seq Bound` = chip_bound, `nanoNOMe Bound` = nanonome_bound ,
+                `Chip-seq Unbound` = chip_unbound, `nanoNOMe Unbound` = nanonome_unbound ) %>%
+  as.data.frame()
+```
+
+
+```{r fraction_plots, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200318_gm_readlevel_ctcf_protein_binding_classification.pdf")
+pdf(plotpath,width = 3, height = 2.5, useDingbats = F)
+pal <- pal_npg("nrc")(10)
+pair_pal <- c(pal[4],pal[1])
+meth_pal <- c(pal[4],pal[5])
+heat_pal <- wes_palette("Zissou1")
+# bound fraction depending on chip-seq peak
+ggplot(regs.sub ,aes(y = bound_frac, x = signal)) +
+  geom_bin2d() +
+#  geom_line(inherit.aes = F, data = linreg.dat, mapping = aes( y = frac, x = chip), linetype = "dashed") +
+  scale_fill_gradientn(name = "Count", colors = heat_pal, trans = "log10") +
+#  scale_y_log10()
+  lims(x = c(0, max(regs.sub$signal, na.rm = T))) +
+  coord_cartesian(clip = "off") +
+  theme(legend.position = "bottom") +
+  labs( y = "Fraction of\nBound Reads", x = "ChIP-seq Signal")
+ggplot(signal.bin,aes( x = bin, y = bound_frac)) +
+  geom_boxplot()
+ggplot(regs.sub,aes( x = bound_frac)) +
+  geom_density()
+ggplot(regs.sub,aes(x = type, y = bound_frac)) +
+  geom_boxplot(outlier.shape = NA, width = 0.05) +
+  geom_violin(alpha = 0) +
+  labs( x = "CTCF ChIP-seq", title = "Fraction of Protein-Bound Reads") +
+  theme(axis.title.y = element_blank(), 
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 10)
+  )
+ggplot(regs.sub,aes(x = bound_frac, fill = cluster)) +
+  geom_histogram(bins = 30) +
+  labs( x = "Fraction of Reads with CTCF Binding", y = "Count of Binding Sites") + 
+  theme(legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.position = "bottom") +
+  coord_cartesian(clip = "off")
+
+dev.off()
+plotpath <- file.path(plotdir,"200318_gm_readlevel_ctcf_protein_binding_classification_upset.pdf")
+pdf(plotpath,width = 5, height = 2.5, useDingbats = F)
+## upset
+upset(binding.upset,
+      main.bar.color = c(meth_pal[2],meth_pal[1],"gray23","gray23"),
+      sets.bar.color = c(meth_pal[2],meth_pal[2],meth_pal[1],meth_pal[1]),
+      matrix.color = "black",
+      text.scale = 1.5, mb.ratio = c(0.6,0.4)
+      )
+
+dev.off()
+```
+
+### compare 
+
+```{r comparison, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# first compare accessibility and methylation proximal to binding site
+# 100 region around center
+cgside <- 100
+gcside <- 100
+meth.list <- lapply(seq_along(cgstate.list),function(i){
+  cg <- cgstate.list[[i]]
+  gc <- gcstate.list[[i]]
+  cgfreq <- cg[abs(cg$distance) <= cgside,] %>%
+    filter(!is.na(mcall)) %>%
+    group_by(state,qname,mcall) %>%
+    summarize(n = n()) %>%
+    spread(mcall,n) %>%
+    mutate(`0` = ifelse(0 %in% names(.),`0`,NA), 
+      `1` = ifelse(1 %in% names(.),`1`,NA)) %>%
+    replace(is.na(.),0) %>%
+    mutate(freq = `1`/(`1`+`0`))
+  gcfreq <- gc[abs(gc$distance) <= gcside,] %>%
+    filter(mcall != -1) %>%
+    group_by(state,qname,mcall) %>%
+    summarize(n = n()) %>%
+    spread(mcall,n) %>%
+    mutate(`0` = ifelse(0 %in% names(.),`0`,NA), 
+      `1` = ifelse(1 %in% names(.),`1`,NA)) %>%
+    replace(is.na(.),0) %>%
+    mutate(freq = `1`/(`1`+`0`))
+  bind_rows(list(cpg = cgfreq, gpc = gcfreq),.id = "mod") %>%
+    mutate(idx = i)
+  })
+meth.tb <- bind_rows(meth.list) %>%
+  mutate(site_num = `0`+`1`)
+meth.tb <- bind_cols(meth.tb,regs.sub[meth.tb$idx,])
+
+meth.tb %>%
+  group_by(mod,state,type) %>%
+  summarize( avg = mean(freq),
+    sd = sd(freq)
+  )
+
+# consistency : jaccard similarity?
+jac.list <- lapply(seq_along(cgstate.list),function(i){
+  print(i)
+  cg <- cgstate.list[[i]] %>%
+    group_by(state)
+  gc <- gcstate.list[[i]] %>%
+    group_by(state)
+  # CpG
+  mat <- cg[abs(cg$distance) <= 2e3,c("qname","distance","mcall")]  %>%
+    distinct(qname,distance,.keep_all = T) %>%
+    spread(qname,mcall) %>%
+    dplyr::select(-distance) %>% as.matrix()
+  qstates <- unique(cg[,c("qname","state")])
+  # remove reads with < 3 calls
+  callnums <- colSums(!is.na(mat))
+  mat <- mat[,callnums >= 3]
+  # split by state
+  occi <- which(colnames(mat) %in% qstates$qname[qstates$state == "Occupied"])
+  unnocci <- which(colnames(mat) %in% qstates$qname[qstates$state == "Unoccupied"])
+  # get combos 
+  combos <- tibble()
+  if (length(occi) >5 ){
+    combos <- bind_rows(combos,as_tibble(t(combn(occi,2))) %>% mutate(state = "Occupied"))
+  }
+  if (length(unnocci) >5 ){
+    combos <- bind_rows(combos,as_tibble(t(combn(unnocci,2))) %>% mutate(state = "Unoccupied"))
+  }
+  # numbers for jaccard index
+  if (nrow(combos) == 0) {
+    cg.jac <- tibble()
+  } else {
+    cg.jac <- combos  %>%
+      rowwise() %>%
+      mutate(
+        inter = sum(mat[,V1] == mat[,V2],na.rm = T),
+        uni = sum(!is.na(mat[,V1] == mat[,V2])) * 2 - inter
+      )
+  }
+  # GpC
+  mat <- gc[abs(gc$distance) <= 2e3,c("qname","distance","mcall")]  %>%
+    distinct(qname,distance,.keep_all = T) %>%
+    spread(qname,mcall) %>%
+    dplyr::select(-distance) %>% as.matrix()
+  qstates <- unique(gc[,c("qname","state")])
+  # remove reads with < 3 calls
+  callnums <- colSums(!is.na(mat))
+  mat <- mat[,callnums >= 3]
+  # split by state
+  occi <- which(colnames(mat) %in% qstates$qname[qstates$state == "Occupied"])
+  unnocci <- which(colnames(mat) %in% qstates$qname[qstates$state == "Unoccupied"])
+  # get combos 
+  combos <- tibble()
+  if (length(occi) >5 ){
+    combos <- bind_rows(combos,as_tibble(t(combn(occi,2))) %>% mutate(state = "Occupied"))
+  }
+  if (length(unnocci) >5 ){
+    combos <- bind_rows(combos,as_tibble(t(combn(unnocci,2))) %>% mutate(state = "Unoccupied"))
+  }
+  # numbers for jaccard index
+  if (nrow(combos) == 0) {
+    gc.jac <- tibble()
+  } else {
+    gc.jac <- combos  %>%
+      rowwise() %>%
+      mutate(
+        inter = sum(mat[,V1] == mat[,V2],na.rm = T),
+        uni = sum(!is.na(mat[,V1] == mat[,V2])) * 2 - inter
+      )
+  }
+  # combine
+  bind_rows(list(
+      cpg = cg.jac,
+      gpc = gc.jac),.id = "mod") %>%
+  mutate(idx = i)
+})
+jac.tb <- bind_rows(jac.list) %>%
+  mutate(jac = inter/(uni * 2 - inter))
+jac.tb <- bind_cols(jac.tb, regs.sub[jac.tb$idx,])
+
+## save things
+#outpath <- file.path(subdir,"GM12878_CTCF_methylation_freqs_clusters.rds")
+#saveRDS(meth.tb,outpath)
+#meth.tb <- readRDS(outpath)
+#
+#outpath <- file.path(subdir,"GM12878_CTCF_jaccard_distances.rds")
+#saveRDS(jac.tb,outpath)
+#jac.tb <- readRDS(outpath)
+
+# average meth per region
+avgmeth <- meth.tb %>%
+  group_by(mod,state,idx,type) %>%
+  summarize( 
+    meth = sum(`1`),
+    unmeth = sum(`0`),
+    freq = meth/(meth + unmeth),
+    numread = n()) %>%
+  na.omit()
+
+# per-region jac
+jac_persite <- jac.tb %>%
+  group_by(mod,state,type,idx) %>%
+  summarize( jac = median(jac, na.rm = T),
+  n = n())  
+summary(jac_persite$n)
+jac_persite %>%
+  group_by(mod,state,type) %>%
+  summarize(n())
+
+jac.tb %>%
+  group_by(mod,state,type,idx) %>%
+  summarize( jac = mean(jac, na.rm = T),
+  n = n()) %>%
+  group_by(mod,state,type) %>%
+  summarize( mean = mean(jac, na.rm = T),
+  n = n(),
+  sd = sd(jac,na.rm =T )) 
+
+# stats
+library(BSDA)
+jac.nums <- jac_persite %>%
+  group_by(mod,state,type) %>%
+  summarize(n())
+combos <- as_tibble(t(combn(nrow(jac.nums),2)))
+# using t-test for jaccard similarity
+jac.stats <- bind_rows(lapply(seq(nrow(combos)),function(i){
+  comp <- combos[i,]
+  one <- jac.nums[comp$V1,]
+  two <- jac.nums[comp$V2,]
+  dat.one <- jac_persite %>% filter(mod == one$mod, state == one$state, type == one$type) %>% .$jac
+  dat.two <- jac_persite %>% filter(mod == two$mod, state == two$state, type == two$type) %>% .$jac
+#  pval <- z.test(dat.one,dat.two, sigma.x = sd(dat.one,na.rm=T), sigma.y = sd(dat.two,na.rm = T))$p.val
+  pval <- t.test(dat.one,dat.two)$p.val
+  pval <- wilcox.test(dat.one,dat.two)$p.val
+  bind_cols(one,two) %>%
+    dplyr::select(mod,state,type,mod1,state1,type1) %>%
+    mutate(pval = pval)
+  })) %>%
+  filter(mod == mod1)
+jac.stats %>%
+  filter(pval < 1e-10, state == state1 | type == type1)
+# for methylation, using wilcoxin rank-sum (nonparametric)
+meth.stats <- bind_rows(lapply(seq(nrow(combos)),function(i){
+  print(i)
+  comp <- combos[i,]
+  one <- jac.nums[comp$V1,]
+  two <- jac.nums[comp$V2,]
+  dat.one <- avgmeth %>% filter(mod == one$mod, state == one$state, type == one$type) %>% .$freq
+  dat.two <- avgmeth%>% filter(mod == two$mod, state == two$state, type == two$type) %>% .$freq
+#  pval <- z.test(dat.one,dat.two, sigma.x = sd(dat.one,na.rm=T), sigma.y = sd(dat.two,na.rm = T))$p.val
+#  pval <- t.test(dat.one,dat.two)$p.val
+  pval <- t.test(dat.one,dat.two)$p.val
+  bind_cols(one,two) %>%
+    dplyr::select(mod,state,type,mod1,state1,type1) %>%
+    mutate(pval = pval)
+  })) %>%
+  filter(mod == mod1)
+meth.stats %>%
+  filter(pval < 1e-20, state == state1 | type == type1)
+
+
+```
+
+Plots
+
+```{r CTCF_protein_binding_comparison, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200318_gm_readlevel_ctcf_protein_binding_comparisons.pdf")
+pdf(plotpath,width = 5, height = 2.5, useDingbats = F)
+pal <- pal_npg("nrc")(10)
+pair_pal <- c(pal[4],pal[1])
+meth_pal <- c(pal[4],pal[5])
+dodge <- position_dodge(width = 1)
+avgmeth$cl <- avgmeth$type
+jac_persite$cl <- jac_persite$type
+ggplot(avgmeth %>% filter( numread > 5),aes( x = cl, color = state, y = freq)) +
+  facet_wrap(~mod, labeller = as_labeller(c(cpg = "CpG Methylation",gpc = "GpC Accessibility"))) +
+  geom_boxplot(outlier.shape = NA) +
+  labs( x = "Bound Fraction", y = "Average Methylation\nAround Binding Sites") + 
+  scale_color_manual(values = pair_pal, name = "State")
+ggplot(jac_persite,aes( x = cl, color = state, y = jac)) + 
+  facet_wrap(~mod, scales = "free",labeller = as_labeller(c(cpg = "CpG Methylation",gpc = "GpC Accessibility"))) +
+  geom_boxplot(outlier.shape = NA) +
+  labs( x = "Bound Fraction", y = "Average Jaccard Index\nAround Binding Sites") + 
+  scale_color_manual(values = pair_pal, name = "State")
+
+#ggplot(jac.sums %>% filter(n >= 90),aes(x = prot ,y = median, color = prot)) +
+#  geom_boxplot(outlier.shape = NA, width = 0.1, position = dodge) +
+#  scale_color_manual(values = meth_pal) +
+#  geom_violin(alpha = 0, position = dodge) +
+#  labs(y = "Median", title = "Jaccard Similarity", 
+#    x = "nanoNOMe Protein Binding Status") +
+#  theme(
+#    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+#    legend.title = element_text(size = 10), 
+#    legend.text = element_text(size = 10))
+dev.off()
+```
+
+
+### metaplots
+
+```{r protein_binding_aggregate, eval = T, include = FALSE, cache=F }
+# aggregate using runs
+d <- 1000
+avg.list <- lapply(seq_along(cgstate.list),function(i){
+  print(i)
+  cg <- cgstate.list[[i]]
+  gc <- gcstate.list[[i]]
+  # filter out far calls and na calls
+  cg <- cg[!is.na(cg$mcall)& cg$distance >= -d & cg$distance <= d,]
+  gc <- gc[!is.na(gc$mcall)& gc$distance >= -d & gc$distance <= d,]
+  # aggregate
+  bind_rows(list(cpg = cg,gpc = gc),.id = "mod") %>%
+    group_by(mod,state,distance,mcall) %>% summarize(n = n()) %>%
+    spread(mcall,n) %>%
+    replace(is.na(.),0) %>%
+    mutate(freq = `1`/(`0`+`1`), idx = i)
+  })
+# combine and add chip-seq info
+meth.avg <- bind_rows(avg.list) %>%
+  mutate(dist = distance, 
+    chip = regs.sub$type[idx],
+    cluster = regs.sub$cluster[idx]
+  )
+
+# aggregate without averaging
+meth.avg <- bind_rows(list(
+  cpg = bind_rows(cgstate.list)  %>% 
+    filter(abs(distance)<=1e3),
+  gpc = bind_rows(gcstate.list) %>%
+    filter(abs(distance)<=1e3)),.id = "mod") %>%
+  group_by(mod,type,state,mcall,distance) %>%
+  filter(!is.na(mcall),mcall != -1) %>%
+  summarize(n = n()) %>%
+  spread(mcall,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(freq = `1`/(`0`+`1`))
+
+meth.avg <- meth.avg %>%
+  mutate(chip = type, dist = distance)
+
+meth.avg %>%
+  filter(chip == "Unbound",state == "Occupied", abs(dist) < 10)
+meth.avg %>%
+  group_by(chip,state) %>%
+  summarize( mean(`0`+`1`))
+
+# group and split 
+meth.avg <- meth.avg %>%
+  group_by(mod,state,chip)
+keys <- meth.avg %>% group_keys() 
+dist.list <- meth.avg %>%
+  group_split()
+# rollmeans
+roll.list <- lapply(dist.list,aggregate_methylation)
+# combine
+acc.roll <- bind_rows(roll.list,.id = "idx")  %>%
+  type_convert() 
+# add label
+acc.roll <- bind_cols(acc.roll, keys[acc.roll$idx,])
+
+
+# checking some points
+acc.roll %>%
+  filter(mod == "gpc") %>%
+  mutate(side = ifelse(dist<0,"left","right")) %>%
+  group_by(state,chip,side) %>%
+  filter(freq == max(freq))
+
+
+```
+
+```{r aggregate_plots, eval = T, echo = F, fig.height=4, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200318_gm_readlevel_ctcf_protein_binding_metaplot.pdf")
+pdf(plotpath,width = 5, height = 4, useDingbats = F)
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[4],pal[5])
+ggplot(acc.roll,aes( x = dist, y = freq, color = state)) +
+  facet_wrap(~mod + chip,labeller = as_labeller(
+#      c(Low="Low Binding Fraction",High="High Binding Fraction", 
+      c(Bound="Peak",Unbound="No Peak", 
+        cpg = "CpG Methylation", gpc= "GpC Accessibility"))) +
+  geom_line() + lims( y = c(0,1), x = c(-1e3,1e3)) +
+  scale_color_manual(name = "Read State",values = meth_pal) +
+  labs(x = "Distance from CTCF Binding Site", title = "Aggregated Methylation") + 
+  theme(
+    legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid"),
+    legend.title = element_text(size = 10), 
+    legend.text = element_text(size = 10),
+    axis.title.y = element_blank(),
+    panel.spacing = unit(1, "lines")
+  ) +
+  coord_cartesian(clip = "off")
+dev.off()
+```
+
+
+## single-read plot
+ 
+```{r singleread_plot, eval = T, echo = F, fig.height=8, fig.width=6, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[4],pal[5],pal[1],pal[2])
+
+# pick a region
+pltregs <- binding.sum %>%
+  mutate(lab = paste(chrom,regstart,type, sep = "_")) %>%
+  filter( bound_frac >= 0.3, 
+    bound_frac <= 0.6,
+    Occupied >= 20,
+    Unoccupied >= 20
+  )
+#  group_by(type) %>%
+#  sample_n(5) %>%
+#  ungroup()
+regs.sub <- regs.sub %>%
+  mutate(lab = paste(seqnames,start,type, sep = "_"))
+regi <- match(pltregs$lab,regs.sub$lab)[1:5]
+
+plotpath <- file.path(plotdir,"200401_nanoNOMe_readlevel_ctcf_region_runplots.pdf")
+pdf(plotpath,width = 4, height = 3, useDingbats = F)
+for (i in regi){
+  print(i)
+  reg <- regs.sub[i,]
+  center <- tibble(center=(reg$start+reg$end + 1)/2, color = "Center")
+  
+  runs <- gcruns.dist[gcruns.dist$chrom == reg$seqnames & gcruns.dist$regstart == reg$start,] %>%
+    mutate(m = ifelse(values == 1, "Accessible","Inaccessible")) %>%
+    distinct(qname,start,end,.keep_all=T) 
+  # predict protein binding
+  runs.closed <- runs %>%
+    filter(values == 0) %>%
+    filter(dist < 20)
+  prot.pred <- predict(mod,runs.closed$width)
+  runs.closed <- runs.closed %>%
+    mutate(cluster = prot.pred$classification)
+  qname.occ <- runs.closed %>%
+    filter(cluster == 1) %>%
+    .$qname
+  cgdat <- cgdist.list[[i]]
+  # assign protein binding state
+  cgruns <- getRuns(cgdat,maxGap = 20) %>%
+    mutate(prot = ifelse(qname %in% qname.occ, "Occupied","Unoccupied"),
+      m = ifelse(values == 1, "Methylated","Unmethylated")
+      ) %>%
+    arrange(prot)
+  runs <- runs %>%
+    mutate(prot = ifelse(qname %in% qname.occ, "Occupied","Unoccupied")) %>%
+    arrange(prot)
+  # get plotting coords separately
+  gcruns.bound <- order_reads(runs %>% filter(prot == "Occupied"))
+  gcruns.unbound <- order_reads(runs %>% filter(prot == "Unoccupied"))
+  cgruns.bound <- order_reads(cgruns %>% filter(prot == "Occupied"),bounds = gcruns.bound$bounds)
+  cgruns.unbound <- order_reads(cgruns %>% filter(prot == "Unoccupied"),bounds = gcruns.unbound$bounds)
+  runs.bound <- list(
+    x = bind_rows(list(cpg = cgruns.bound$x,gpc = gcruns.bound$x),.id = "mod"),
+    bounds = bind_rows(list(cpg = cgruns.bound$bounds,gpc = gcruns.bound$bounds),.id = "mod"))
+  runs.unbound <- list(
+    x = bind_rows(list(cpg = cgruns.unbound$x,gpc = gcruns.unbound$x),.id = "mod"),
+    bounds = bind_rows(list(cpg = cgruns.unbound$bounds,gpc = gcruns.unbound$bounds),.id = "mod"))
+  # let's plot unbound under bound, with some space
+  offset <- round(min(runs.bound$bounds$ymin)) - 2
+  # combine 
+  runs.both <- bind_rows(runs.bound$x,
+    runs.unbound$x %>%
+      mutate( ymin = ymin + offset, ymax = ymax + offset))
+  bounds.both <- bind_rows(runs.bound$bounds,
+    runs.unbound$bound %>%
+      mutate( ymin = ymin + offset, ymax = ymax + offset))
+  # breaks
+  breaks <- seq(floor(min(runs$start)/500)*500, 
+                ceiling(max(runs$end)/500)*500,500)
+  breaklabs <- breaks/1000
+  if (min(breaklabs) > 1000){ 
+    morethan1k <- floor(breaklabs/1000) 
+    lessthan1k <- breaklabs - morethan1k*1000
+    breaklabs <- paste(morethan1k,lessthan1k,sep = ",")
+  }
+  
+  g <- ggplot(runs.both,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) +
+    facet_wrap(~mod,ncol = 2,labeller = as_labeller(c(cpg = "CpG Methylation",gpc = "GpC Accessibility")) )+
+    geom_rect(data = bounds.both, fill = "grey80") + 
+    geom_rect(aes(fill = m))   +
+    geom_vline(data = center, mapping = aes(xintercept = center, linetype = color)) + 
+    geom_hline(yintercept = offset + 0.5) +
+    scale_fill_manual(name = "State", values = meth_pal) +
+    scale_linetype_manual(name = "Binding Site", values = "dashed") +
+    labs(x = paste("Coordinate on",runs$chrom[1],"(kb)"), y = "Reads") +
+    theme(axis.text.y = element_blank(), 
+          axis.ticks.y = element_blank(),
+          panel.spacing = unit(2, "lines"),
+          legend.position = "bottom") +
+    scale_x_continuous(breaks = breaks, labels = breaklabs) +
+    coord_cartesian(xlim = c(reg$start,reg$end)) 
+  
+  print(g)
+  
+}
+dev.off()
+```
+
+```{r one_region, eval = T, include = FALSE, cache=F }
+# pick one with appreciable number of reads
+numreads <- gcdist %>% 
+  distinct(type,qname,seqnames,regstart) %>%
+  group_by(type,seqnames,regstart) %>%
+  summarize(n = n())
+reglab <- numreads[which(numreads$n>50 & numreads$type == "Bound")[1],]
+gcdist.reg <- gcdist %>%
+  filter(seqnames == reglab$seqnames, regstart == reglab$regstart)
+# remove methylated reads
+meth.read <- gcdist.reg %>%
+  filter(mcall != -1) %>%
+  group_by(qname) %>%
+  summarize(meth = sum(mcall)/n()) %>%
+  arrange(desc(meth))
+gcdist.reg <- gcdist.reg[gcdist.reg$qname %in% meth.read$qname[meth.read$meth < 0.6],]
+```
+
