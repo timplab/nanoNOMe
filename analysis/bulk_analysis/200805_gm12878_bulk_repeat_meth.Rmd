@@ -1,0 +1,406 @@
+---
+title: "nanoNOMe bulk repeat methylation analysis"
+author: Isac Lee
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_notebook : default
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: xelatex
+#bibliography: master.bib
+# set dir in the following function to the desired loc
+mainfont: "DejaVu Sans" # Try out some font options if xelatex
+titlefont: "DejaVu Sans" # Try out some font options if xelatex
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, 
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("~/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(biomaRt)
+library(UpSetR)
+library(grid)
+library(ggridges)
+```
+
+```{r functions, include = F}
+```
+
+```{r annotation, eval = T, include = FALSE, cache=F }
+# first all repetitive elements?
+rep_fh <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_repeats.bed"
+rep_cnames <- c("chrom","start","end","repname","repscore", "strand","reptype")
+reps <- read_tsv(rep_fh,col_names = rep_cnames) 
+# fix start to be 1-based, add width, and add label
+reps <- reps %>%
+  mutate(
+    start = start - 1,
+    width = end - start + 1,
+    label = paste(chrom,start,end,repname,sep ="_"))
+# filter some rep type
+reps <- reps %>%
+  mutate(reptype = case_when(
+    grepl("lu",repname) ~ "Alu",
+    grepl("MIR",repname) ~ "MIR",
+    TRUE ~ reptype ))
+reps <- reps %>%
+  filter(reptype %in% c("LINE","Alu","MIR","LTR","MIR"))
+table(reps$reptype)
+reps.gr <- GRanges(reps)
+
+# CGI?
+cgi.fp="/dilithium/Data/Nanopore/projects/nomeseq/analysis/annotations/hg38/hg38_cgi.txt.gz"
+cgi.cnames=c("idx","chrom","start","end")
+cgi = GRanges(read_tsv(cgi.fp,cgi.cnames))
+
+reps  <- reps %>%
+  mutate(cgi = overlapsAny(reps.gr,cgi))
+
+reps %>%
+  group_by(cgi,reptype) %>%
+  summarize(n = n()) %>%
+  spread(cgi,n) %>%
+  mutate(frac = `TRUE`/(`TRUE`+`FALSE`))
+
+  
+```
+
+#### data
+
+```{r data , eval = T, include = FALSE, cache=F }
+plotdir <- "/home/isac/Dropbox (Timp Lab)/Data/nome-seq/version3_guppy3/plots/frequency"
+# data
+fdir = "/uru/Data/Nanopore/projects/nanonome/pooled/mfreq"
+cpgpath <- file.path(fdir,"GM12878_nanoNOMe.cpg.BSmooth.rds")
+gpcpath <- file.path(fdir,"GM12878_nanoNOMe.gpc.BSmooth.rds")
+peakpath <- "/uru/Data/Nanopore/projects/nanonome/peaks/GM12878_nanoNOMe_accessibility_peaks.rds"
+
+# methylation data
+cpg <- readRDS(cpgpath)
+gpc <- readRDS(gpcpath)
+bs.list <- list(cpg,gpc)
+names(bs.list) <- c("cpg","gpc")
+# only use coordinates that have > 5x coverage
+cov.list <- lapply(bs.list,getCoverage,type = "Cov",what = "perBase")
+keepi.list <- lapply(cov.list,function(x)which(x > 5))
+bs.list <- mapply(function(x,i)x[i,],bs.list,keepi.list)
+
+# peaks
+peaks <- readRDS(peakpath)
+# let's just use significant peaks
+peaks <- peaks %>% filter(sig == "sig")
+peaks.gr <- GRanges(peaks)
+```
+
+### filter and randomize regions based on coverage in data
+
+
+```{r regions, eval = T, include = FALSE, cache=T }
+cpg.cov <- getCoverage(cpg)
+cpgcov.ranges <- quantile(cpg.cov[,1],c(0.05,0.95))
+# coverage in reps
+reps.cov <- getCoverage(cpg,reps.gr,what = "perRegionAverage")
+keepi <- which(reps.cov[,1] > cpgcov.ranges[1] & reps.cov[,1] < cpgcov.ranges[2])
+reps.keep <- reps[keepi,]
+length(keepi)/nrow(reps)
+reps.gr <- GRanges(reps.keep)
+
+# get gc num
+library(BSgenome.Hsapiens.UCSC.hg38)
+reps.seq <- getSeq(Hsapiens,reps.keep$chrom,reps.keep$start,reps.keep$end ,strand = "+")
+reps.keep$gcnum <- str_count(reps.seq,"C") + str_count(reps.seq,"G")
+reps.keep$cpgnum <- str_count(reps.seq,"CG")
+reps.keep <- reps.keep %>%
+  mutate(gcfrac = gcnum/width,
+    cpgperbp = cpgnum/width,
+  )
+# random coordinates for reference
+chromsizes <- read_tsv("/atium/Data/Reference/human/hg38_noalt/hg38_noalt.fa.fai",col_names = c("chrom","size"))
+
+# let's do shuffling x 10 times
+shuf.list <- lapply(seq(1,10),function(i){
+  print(i)
+  starts = sapply(seq(nrow(reps.keep)), function(j){
+    floor(runif(1,min = 1, max = chromsizes$size[match(reps.keep$chrom[j],chromsizes$chrom)] - reps.keep$width[j]))
+    })
+  reps.keep %>%
+    mutate( 
+      start = starts,
+      end = start + width - 1, 
+      strand = strand) 
+  })
+shuf.tb <- bind_rows(shuf.list)
+shuf.gr <- GRanges(shuf.tb)
+
+# remove shuf overlapping rep
+keepi <- !overlapsAny(shuf.gr,reps.gr)
+shuf.tb <- shuf.tb[keepi,]
+shuf.gr <- shuf.gr[keepi]
+# only those with good cov
+shuf.cov <-getCoverage(cpg,shuf.gr,what = "perRegionAverage")
+keepi <- which(shuf.cov[,1] > cpgcov.ranges[1] & shuf.cov[,1] < cpgcov.ranges[2])
+shuf.tb <- shuf.tb[keepi,]
+shuf.gr <- shuf.gr[keepi]
+shuf.tb <- shuf.tb %>%
+  mutate(gcfrac = gcnum/width,
+    cpgperbp = cpgnum/width,
+  )
+
+# get sequences context
+shuf.seq <- getSeq(Hsapiens,shuf.tb$chrom,shuf.tb$start,shuf.tb$end ,strand = "+")
+shuf.tb$gcnum <- str_count(shuf.seq,"C") + str_count(shuf.seq,"G")
+shuf.tb$cpgnum <- str_count(shuf.seq,"CG")
+
+# for each rep type, subset non-overlapping regions
+shufsub <- bind_rows(lapply(unique(reps.keep$reptype),function(r){
+    print(r)
+    reps.sub <- reps.keep %>%
+      filter(reptype == r)
+    gcfracs <- reps.sub$gcfrac
+    thrs <- quantile(gcfracs,c(0.05,0.95))
+    nrep <- sum(reps.keep$reptype == r)
+    shuf.reptype <- shuf.tb %>%
+      filter(reptype == r)
+    shufrep.gr <- GRanges(shuf.reptype)
+    # which are overlapping with others in the same list?
+    ovl <- findOverlaps(shufrep.gr,shufrep.gr)
+    removeidx <- as_tibble(ovl) %>%
+      filter(queryHits != subjectHits) %>%
+      distinct(queryHits) %>%
+      .$queryHits
+    shuf.sub <- shuf.reptype[-removeidx,]
+    # sample the same number
+    shuf.sub %>%
+      sample_n(nrep)
+  }))
+
+# combine regs
+allregs <- bind_rows(list(rep = reps.keep,shuf = shufsub),.id = "what")
+allregs.gr <- GRanges(allregs)
+
+allregs %>%
+  group_by(what,reptype) %>%
+  summarize(quantile(cpgnum,0.25))
+# write data?
+outpath <- file.path(plotdir,"shuffle_repeats_data.tsv")
+write_tsv(allregs,outpath)
+
+pdf(file.path(plotdir,"shuffle_repeats_gcfrac_comparison.pdf"))
+ggplot(allregs,aes(x = cpgperbp, y = reptype,fill = what)) +
+  geom_density_ridges(alpha = 0.7) +
+  labs(x = "CpG per bp")
+ggplot(allregs,aes(x = gcfrac, y = reptype,fill = what)) +
+  geom_density_ridges(alpha = 0.7) +
+  labs(x = "GC Content")
+dev.off()
+
+pdf(file.path(plotdir,"alu_shuffle_repeats_gcfrac_comparison.pdf"), width = 3, height = 2.5)
+#ggplot(allregs %>% filter(reptype == "Alu"),aes(x = cpgnum,fill = what)) +
+#  geom_density(alpha = 0.7) +
+#  lims(x = c(0,50))
+ggplot(allregs %>% filter(reptype == "Alu"),aes(x = cpgperbp,fill = what)) +
+  geom_density(alpha = 0.7) +
+  lims(x = c(0,.10))
+ggplot(allregs %>% filter(reptype == "Alu"),aes(x = gcfrac,fill = what)) +
+  geom_density(alpha = 0.7)
+dev.off()
+
+pdf(file.path(plotdir,"alu_shuffle_repeats_cpgnum_comparison.pdf"), width = 3, height = 2.5)
+ggplot(allregs %>% filter(reptype == "Alu"),aes(x = cpgnum,fill = what)) +
+  geom_histogram(alpha = 0.7,position = "dodge") +
+  lims(x = c(0,50))
+dev.off()
+
+```
+
+### get region methylation 
+
+```{r cpg_meth, eval = T, include = FALSE, cache=F }
+# reps - cpg
+cpg_m <- getCoverage(bs.list$cpg,region = allregs.gr,type = "M", what = "perRegionTotal")
+cpg_cov <- getCoverage(bs.list$cpg,region = allregs.gr,type = "Cov", what = "perRegionTotal")
+cpg.tb <- allregs %>%
+  mutate(meth = cpg_m[,1], cov = cpg_cov[,1])
+# gpc - how about peak accessibility?
+gpc_m <- getMeth(bs.list$gpc,region = allregs.gr, type = "smooth", what = "perBase")
+gpc_cov <- getCoverage(bs.list$gpc,region = allregs.gr, type = "Cov", what = "perBase")
+gpc_m_max <- mapply(function(m,cov){
+  keepi <- cov > 20
+  max(m[keepi],na.rm = T)
+  }, gpc_m,gpc_cov)
+# peak accessibility 
+meth.tb <- cpg.tb %>%
+  mutate(gpc = gpc_m_max,
+         cpg = meth/cov) %>%
+  filter(cov > 20) %>%
+  mutate(gpc = ifelse(gpc == -Inf, NA, gpc))
+
+# gather
+meth.gather <- meth.tb %>%
+  gather(mod,freq,cpg,gpc)
+
+# gpc peaks
+peaki <- overlapsAny(allregs.gr,peaks.gr)
+peaks.tb <- cpg.tb %>%
+  mutate(peak = peaki) %>%
+  filter(cov > 20)
+peaks.frac <- peaks.tb %>%
+  group_by(peak,what,reptype) %>%
+  summarize(n =n ()) %>%
+  spread(peak,n) %>%
+  mutate(frac = `TRUE`/(`TRUE`+`FALSE`))
+peaks.sum <- peaks.frac %>%
+  dplyr::select(what,reptype,frac) %>%
+  spread(what,frac) %>%
+  mutate(ratio = rep/shuf)
+# peaks per 1mb and enrichment?
+gpc.cl <- clusters.list$gpc
+gpc.size <- sum(gpc.cl$end - gpc.cl$start + 1)
+global <- length(peaks.gr)/gpc.size * 1e6
+ovl <- findOverlaps(peaks.gr,regreps.gr)
+repn <- regreps[subjectHits(ovl),] %>%
+  mutate(peakidx = queryHits(ovl)) %>%
+  group_by(reptype) %>%
+  summarize( n = n())
+peaknums <- regreps %>%
+  group_by(reptype) %>%
+  summarize( width = sum(width)) %>%
+  mutate(n = repn$n[match(reptype,repn$reptype)],
+    normn = n / width * 1e6
+  )  %>%
+  bind_rows(tibble(reptype = "Global",normn = global))
+```
+
+```{r meth_plot, eval = T, echo = F, fig.height=3, fig.width=6, message=F, warning = F}
+# rename what
+meth.plt <- meth.gather %>%
+  mutate(Region = ifelse(what == "rep","Observed","Expected"))  %>%
+  filter(cpgnum > 3)
+plotdir <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/frequency"
+plotpath <- file.path(plotdir,"200805_gm12878_repeats_density.pdf")
+pdf(plotpath,height = 3, width = 6, useDingbats = F)
+ggplot(meth.plt,aes( x = freq, y = reptype, alpha = Region, linetype = Region)) +
+  facet_wrap(~mod, ncol = 2,scales = "free", labeller = as_labeller(c(cpg="Region CpG Methylation",gpc="Peak GpC Accessibility")), nrow = 2) +
+  scale_linetype_manual(values = c("dashed","solid")) +
+  scale_alpha_manual(values = c(0,0.5)) +
+  geom_density_ridges(scale = 1.5, fill = "orange") +
+  labs( x = "Frequency", y = "Repeat Type") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  coord_cartesian(clip = "off")
+dev.off()
+```
+```{r peak_frac_plot, eval = T, echo = F, fig.height=1.5, fig.width=3, message=F, warning = F}
+peaks.plt <- peaks.frac %>%
+  mutate(Region = ifelse(what == "rep","Repeat","Shuffled"))
+peaks.enrich <- peaks.plt %>%
+  ungroup() %>%
+  dplyr::select(reptype,frac,Region) %>%
+  spread(Region,frac)  %>%
+  mutate(enrich = Repeat/Shuffled)
+plotpath <- file.path(plotdir,"200805_gm12878_repeats_peak_fractions.pdf")
+pdf(plotpath,height = 3, width = 2, useDingbats = F)
+ggplot(peaks.plt,aes( x = reptype, fill = Region, y = frac)) +
+  geom_histogram(stat = "identity",position = "dodge") +
+  labs( x = "Repeat Type", y = "Fraction with\nAccessibility Peak") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  coord_cartesian(clip = "off")
+ggplot(peaks.enrich,aes( x = reptype, y = enrich)) +
+  geom_histogram(stat = "identity",position = "dodge") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  labs( x = "Repeat Type", y = "Fraction with\nAccessibility Peak") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  coord_cartesian(clip = "off")
+plt <- peaknums %>%
+  mutate(reptype = factor(reptype,levels = c("Global","Alu","LINE","LTR","MIR")),
+    nlab = as.character(round(normn))
+  )
+ggplot(plt,aes( x = reptype, y = normn)) +
+  geom_histogram(stat = "identity",position = "dodge") +
+  labs( x = "Repeat Type", y = "Number of\nPeaks Per 1Mb") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  geom_text(mapping = aes(label = nlab), hjust = 0) +
+  coord_flip(clip = "off") 
+#  coord_cartesian(clip = "off")
+dev.off()
+```
+### per cpg methylation
+
+```{r}
+cpg_m <- getMeth(bs.list$cpg,region = allregs.gr,type = "raw", what = "perBase")
+allregs
+m.list <- lapply(seq_along(cpg_m),function(i){
+  x <- cpg_m[[i]][,1]
+  if (!is.null(x)){
+    y <- tibble(freq = x)
+    bind_cols(y,allregs[rep(i,nrow(y)),])
+  }
+  })
+
+m.tb <- bind_rows(m.list)
+table(m.tb$reptype)
+plotpath <- file.path(plotdir,"200805_gm12878_repeat_per_site_cpg.pdf")
+pdf(plotpath,height = 4, width = 5, useDingbats = F)
+ggplot(m.tb,aes( x = freq, y = reptype, alpha = what, linetype = what)) +
+  scale_linetype_manual(values = c("dashed","solid")) +
+  scale_alpha_manual(values = c(0,0.5)) +
+  geom_density_ridges(scale = 1.5, fill = "orange") +
+  labs( x = "Frequency", y = "Repeat Type") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  coord_cartesian(clip = "off")
+dev.off()
+#ggplot(m.tb,aes(x = freq, color = what)) +
+#  facet_wrap(~reptype) +
+#  geom_density()
+
+
+```
+
+### methylation vs peaks
+
+Methylation at repeats with accessibility peaks vs not?
+
+```{r peak_meth, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F}
+# per base methylation at regions
+cpg.rep <- bs.list$cpg[overlapsAny(regreps.gr),]
+ovl <- findOverlaps(cpg.rep,regreps.gr)
+cpgmeth.rep <- getMeth(cpg.rep,what = "perBase")
+reps.meth <- regreps[subjectHits(ovl),] %>%
+  mutate(
+    pos = start(cpg.rep[queryHits(ovl)]),
+    cpg = cpgmeth.rep[queryHits(ovl),1])
+repsmeth.gr <- GRanges(reps.meth %>% mutate( start = pos, end = pos))
+peaki <- overlapsAny(repsmeth.gr,peaks.gr)
+reps.meth <- reps.meth %>%
+  mutate(peak = ifelse(peaki, "With Peak","No Peak")) %>%
+  group_by(chrom,start,end,repname) %>%
+  mutate(regpeak = ifelse("With Peak" %in% peak, "With Peak","No Peak")) %>%
+  ungroup()
+repregs.meth <- reps.meth %>%
+  group_by(chrom,start,end,repname,reptype,regpeak) %>%
+  summarize( cpg = mean(cpg))
+nums <- repregs.meth %>%
+  group_by(reptype,regpeak) %>%
+  summarize( n =n())
+ggplot(repregs.meth %>% mutate(width = end-start + 1),aes( x = width, y = reptype, fill = regpeak)) +
+  geom_density_ridges(alpha = 0.5,scale = 1.5) +
+  lims(x= c(0,5000))
+
+ggplot(repregs.meth,aes( x = cpg,fill = regpeak, y = reptype)) +
+  geom_density_ridges(alpha = 0.5,scale = 1.5) +
+  labs( x = "Frequency", y = "Repeat Type") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  coord_cartesian(clip = "off")
+```
+

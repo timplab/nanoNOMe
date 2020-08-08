@@ -1,0 +1,185 @@
+---
+title: "nanoNOMe single-read combinatorial clutsering"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library(parallel)
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+```
+
+```{r functions, include = F}
+```
+```{r annotation, eval = T, include = FALSE, cache=F }
+outdir <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/readlevel"
+# expression data
+genes_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878/GM12878_genes_exp_quartiles.bed"
+cnames <- c("chrom","start","end","txid","quartile","strand","ensid","hgnc_symbol","fpkm")
+genes <- read_tsv(genes_fp,col_names = cnames)
+
+tss <- genes %>%
+  mutate(start = ifelse(strand=="-",end, start), end = start)
+
+# motif numbers
+# get 200 bp GpC number
+tss.gr <- GRanges(tss)
+seqregs.gr <- resize(tss.gr,width = 200, fix = "center")
+# get sequence
+regs.seq <- getSeq(Hsapiens,seqregs.gr)
+gclist <- gregexpr2("GC",regs.seq)
+gcnums <- sapply(gclist,length)
+tss$gpcnum <- gcnums
+# gc content
+tss$gcnum <- str_count(regs.seq,"C") + str_count(regs.seq,"G")
+
+seqregs.gr <- resize(tss.gr,width = 1000, fix = "center")
+# get sequence
+regs.seq <- getSeq(Hsapiens,seqregs.gr)
+cglist <- gregexpr2("CG",regs.seq)
+cgnums <- sapply(cglist,length)
+tss$cpgnum <- cgnums
+
+# percentages
+tss <- tss %>%
+  mutate(gcperc = gcnum/200,
+    gpcperc = gpcnum/200,
+    cpgperc = cpgnum/1000)
+# stratify by percentage
+pern <- round(nrow(tss)/10,0)
+tss <- tss %>%
+  arrange(gc_content) %>%
+  mutate(
+    bin = c(rep(seq(10,100,10),each = pern),100),
+    bin = factor(bin)
+  )
+quantile(tss$gpcnum,seq(0.2,1,0.2))
+```
+
+```{r num_plt, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# let's plot scatter b/c gcnum and gpc?
+outpath <- file.path(outdir,"200805_GM_genes-gccontent_count_vs_fract_data.tsv")
+write_tsv(tss,outpath)
+plotpath <- file.path(outdir,"200807_GM_genes-gccontent_count_vs_fract.pdf")
+pdf(plotpath,width = 3, height = 3)
+ggplot(tss,aes(x = bin , y = gpcnum) ) +
+  geom_violin() +
+  geom_boxplot(outlier.shape = NA,width = 0.25) +
+  labs( x = "CG Percentile", y = "GpC Count")
+ggplot(tss,aes(x = gcperc, y = gpcnum) ) +
+  geom_bin2d() +
+  scale_fill_gradient(trans = "log10") +
+  lims(x = c(0,1)) +
+  labs( x = "GC Content", y = "GpC Count")
+ggplot(tss,aes(x = gcperc, y = cpgnum) ) +
+  geom_bin2d() +
+  scale_fill_gradient(trans = "log10") +
+  lims(x = c(0,1)) +
+  labs( x = "GC Content", y = "CpG Count")
+dev.off()
+
+```
+
+## Accessibility peaks?
+
+```{r Access, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+regpath <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/peak_calling/GM12878_nanoNOMe_accessibility_peaks.tsv"
+atacpath <- "/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/atac/GSE47753_GM12878_ATACseq_50k_AllReps_ZINBA_pp08.hg38.bed"
+dnasepath <- "/dilithium/Data/Nanopore/projects/nomeseq/analysis/database/gm12878/dnase/ENCFF598KWZ.bed.gz"
+
+regions <- read_tsv(regpath)
+atac <- read_tsv(atacpath,col_names = c("chrom","start","end","id","score","strand"))
+dnase <- read_tsv(dnasepath,col_names = c("chrom","start","end","id","score","strand","signal","pval","qval","etc"))
+
+# let's first remove chroms that don't exist in all three
+chroms.keep <- as.character(unique(regions$Chromosome))
+
+regions.gr <- GRanges(regions %>% filter( Chromosome %in% chroms.keep))
+atac.gr <- GRanges(atac %>% filter(chrom %in% chroms.keep))
+dnase.gr <- GRanges(dnase %>% filter(chrom %in% chroms.keep))
+```
+
+```{r Access_stratify, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# stratify by percentage
+pern <- round(nrow(tss)/10,0)
+tss <- tss %>%
+  arrange(gcnum) %>%
+  mutate(
+    bin = c(rep(seq(10,100,10),each = pern),100),
+    bin = factor(bin)
+  )
+# fraction of TSS with peaks vs gcnum
+tss.gr <- GRanges(tss)
+numpeaks <- tss %>%
+  mutate(atacpeak = overlapsAny(tss.gr,atac.gr),
+    nomepeak = overlapsAny(tss.gr,regions.gr),
+    dnasepeak = overlapsAny(tss.gr,dnase.gr)
+    ) %>%
+  group_by(bin,quartile) %>%
+  summarize(n = n(), atac = sum(atacpeak), nome = sum(nomepeak),dnase = sum(dnasepeak)) %>%
+  mutate(atacfrac = atac/n,
+    nomefrac = nome/n,
+    dnasefrac = dnase/n
+  )  %>%
+  group_by(bin) %>%
+  mutate(nfrac = n/sum(n))%>%
+  gather(what,frac,atacfrac,nomefrac,dnasefrac) %>%
+  mutate(what = case_when(
+      what == "atacfrac" ~ "ATAC-seq",
+      what == "nomefrac" ~ "nanoNOMe",
+      what == "dnasefrac" ~ "DNAse-seq"),
+    quartile = factor(quartile)
+  ) %>%
+  filter(quartile %in% c(1,4))
+```
+
+
+```{r plt_pekas, eval = T, echo = F, fig.height=3, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+outpath <- file.path(outdir,"200805_GM_ATACseq_peak_tss_gcbias_q1_4_genefracs_peakfracs_data.tsv")
+write_tsv(numpeaks,outpath)
+
+numpeaks
+plotpath <- file.path(outdir,"200805_GM_ATACseq_peak_tss_gcbias_q1_4_genefracs_peakfracs.pdf")
+pdf(plotpath,height = 3, width = 3)
+ggplot(numpeaks,aes(x = bin,y = frac,color= quartile, group = quartile)) +
+  facet_wrap(~what, nrow = 3) +
+  geom_point() +
+  geom_line() +
+#  geom_bar(stat = "identity",position = "dodge") +
+  labs( x = "Percentile of GC Content", y = "Fraction of TSS with ATAC-seq Peak",
+    title = "Fraction of TSS with Accessibility Peaks"
+  )
+ggplot(numpeaks %>% filter(what == "nanoNOMe"),aes(x = bin,y = n,color= quartile, group = quartile)) +
+#  geom_bar(stat = "identity",position = "dodge") +
+  geom_point() +
+  geom_line() +
+  labs( x = "Percentile of GC Content", y = "Fraction of Genes",
+    title = "Number of Genes in the Quartile")
+ggplot(numpeaks %>% filter(what == "nanoNOMe"),aes(x = bin,y = nfrac,color= quartile, group = quartile)) +
+#  geom_bar(stat = "identity",position = "dodge") +
+  geom_point() +
+  geom_line() +
+  labs( x = "Percentile of GC Content", y = "Fraction of Genes",
+    title = "Fraction of Genes in the Quartile")
+dev.off()
+
+```

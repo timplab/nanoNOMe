@@ -1,0 +1,1644 @@
+---
+title: "nanoNOMe haplotype allele-specific genome_wide"
+author: Isac Lee
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_notebook : default
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: xelatex
+#bibliography: master.bib
+# set dir in the following function to the desired loc
+mainfont: "DejaVu Sans" # Try out some font options if xelatex
+titlefont: "DejaVu Sans" # Try out some font options if xelatex
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, 
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("~/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(biomaRt)
+library(UpSetR)
+library(grid)
+```
+
+```{r functions, include = F}
+```
+```{r data , eval = T, include = FALSE, cache=F }
+# data
+fdir = "/uru/Data/Nanopore/projects/nanonome/haplotype"
+plotdir <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/haplotypes"
+cpgpath <- file.path(fdir,"GM12878_nanoNOMe_cpg_haplotypes_bsmooth.rds")
+gpcpath <- file.path(fdir,"GM12878_nanoNOMe_gpc_haplotypes_bsmooth.rds")
+```
+
+```{r preprocess, eval = T, include = FALSE, cache=T }
+cpg <- readRDS(cpgpath)
+gpc <- readRDS(gpcpath)
+
+## filter by coverage ----
+cpg.cov <- getCoverage(cpg,type="Cov",what="perBase")
+keepi <- rowSums(cpg.cov > 3) == ncol(cpg.cov)
+cpg.keep <- cpg[keepi,]
+gpc.cov <- getCoverage(gpc,type="Cov",what="perBase")
+keepi <- rowSums(gpc.cov > 3) == ncol(gpc.cov)
+gpc.keep <- gpc[keepi,]
+```
+
+```{r differential, eval = T, include = FALSE, cache=T }
+outpath <- file.path(fdir,"200425_gm12878_haplotype_diffregs.rds")
+diffregs.list <- readRDS(outpath)
+dmrs  <- diffregs.list$dmrs
+dars  <- diffregs.list$dars
+# then significant ones as tsv file
+## a = 0.01
+cpgmeth <- getMeth(cpg.keep)
+cpgdiff <- cpgmeth[,1]-cpgmeth[,2]
+cpgthr <- quantile(abs(cpgdiff),0.99,na.rm = T)
+gpcmeth <- getMeth(gpc.keep)
+gpcdiff <- gpcmeth[,1]-gpcmeth[,2]
+gpcthr <- quantile(abs(gpcdiff),0.99,na.rm = T)
+# significant
+dmrs <- dmrs %>%
+  mutate(sig = ifelse(abs(meandiff) > cpgthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+dmrs.sig <- dmrs %>%
+  filter(sig == "sig")
+dars <- dars %>%
+  mutate(
+    n = idxEnd - idxStart + 1,
+    sig = ifelse(abs(meandiff) > gpcthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+dars.sig <- dars %>%
+  filter(sig == "sig")
+sum(dmrs.sig$end-dmrs.sig$start)
+sum(dars.sig$end-dars.sig$start)
+```
+
+
+```{r diff_plots, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+diffregs <- bind_rows(list(dmr = dmrs, dar = dars),.id = "mod") %>%
+  filter(end - start + 1 >= 100, idxEnd - idxStart + 1 >= 5) %>%
+  mutate(lowpval = ifelse(p.value < 0.01, "low","high"))
+cutoffs <- tibble(
+  mod = rep(c("dmr","dar"),2),
+  thr = c(cpgthr,gpcthr,-cpgthr,-gpcthr)
+)
+nums.tb <- diffregs %>%
+  filter(sig == "sig") %>%
+  group_by(mod,direction) %>%
+  summarize(n())
+plt <- diffregs %>%
+  group_by(mod,lowpval) %>%
+  sample_n(5e3)
+
+plotpath <- file.path(plotdir,"200802_gm12878_diffregs_volcano.pdf")
+pdf(plotpath,width = 4, height = 4, useDingbats = F)
+ggplot(plt,aes(x = meandiff, y = -log10(p.value), color = sig)) +
+  facet_wrap(~mod,scales = "free",nrow = 2) +
+  geom_hline(yintercept = -log10(0.01),linetype = "dashed") +
+  geom_vline(data = cutoffs,mapping = aes(xintercept = thr),linetype = "dashed") +
+  geom_point(alpha = 0.3) +
+  lims(y = c(0,20), x = c(-0.6,0.6))
+dev.off()
+```
+
+```{r differential_output, eval = T, include = FALSE, cache=T }
+dmrsig.gr <- GRanges(dmrs.sig)
+darsig.gr <- GRanges(dars.sig)
+ovl <- findOverlaps(dmrsig.gr,darsig.gr)
+diffmeth.tb <- tibble(
+  chrom = dmrs.sig$chr[queryHits(ovl)],
+  cpg = dmrs.sig$meandiff[queryHits(ovl)],
+  gpc = dars.sig$meandiff[subjectHits(ovl)])
+# add unoverlapped data
+diffmeth.tb <- diffmeth.tb %>%
+  bind_rows(
+    tibble(chrom = dmrs.sig$chr[-queryHits(ovl)],cpg = dmrs.sig$meandiff[-queryHits(ovl)], gpc = 0),
+    tibble(chrom = dars.sig$chr[-subjectHits(ovl)],gpc = dars.sig$meandiff[-subjectHits(ovl)], cpg = 0))
+
+diffmeth.comp <- diffmeth.tb %>%
+  mutate(
+    "CpG M > P" = ifelse(cpg < 0, 1, 0),
+    "CpG P > M" = ifelse(cpg > 0, 1, 0),
+    "GpC M > P" = ifelse(gpc < 0, 1, 0),
+    "GpC P > M" = ifelse(gpc > 0, 1, 0))
+diffmeth.upset <- diffmeth.comp %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+auto.upset <- diffmeth.comp %>%
+  filter(chrom != "chrX") %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+chrx.upset <- diffmeth.comp %>%
+  filter(chrom == "chrX") %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+
+# upset just the intersecting ones
+comp.comb <- diffmeth.comp %>%
+  filter(cpg != 0, gpc != 0)
+comb.upset <- comp.comb %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+auto.comb <- comp.comb %>%
+  filter(chrom != "chrX") %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+chrx.comb <- comp.comb %>%
+  filter(chrom == "chrX") %>%
+  dplyr::select(-cpg,-gpc, - chrom) %>%
+  as.data.frame()
+
+diffmeth.comp %>%
+  filter(chrom == "chrX", gpc != 0) %>%
+  group_by(`GpC M > P`) %>%
+  summarize( n =n())
+
+
+
+```
+```{r diff_meth_upset, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200427_gm12878_haplotype_dmr_dar_overlap_upset.pdf")
+pdf(plotpath,width = 3, height = 2,useDingbats = F)
+# all 
+upset(diffmeth.upset,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("All DMRs and DARs",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+upset(auto.upset,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("Autosomal",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+upset(chrx.upset,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("chrX",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+# combinatorial
+upset(comb.upset,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("Combinatorial Regions",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+upset(auto.comb,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("Autosomal",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+upset(chrx.comb,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+grid.text("chrX",x = 0.15, y=0.95, gp=gpar(fontsize=10))
+dev.off()
+
+```
+
+```{r diff_region_eg, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+regs <- dmrs.sig %>%
+  arrange(desc(abs(meandiff)))
+reg <- regs[4,]
+reg.gr <- GRanges(reg)
+regwin.gr <- resize(reg.gr,width = 2*width(reg.gr) + 5e3 ,fix = "center")
+plotwin <- resize(reg.gr,width = 2*width(reg.gr) + 2e3 ,fix = "center") %>%
+  as_tibble()
+cpg.reg <- cpg.keep[overlapsAny(cpg.keep,regwin.gr),]
+coords <- as_tibble(granges(cpg.reg))
+rawmeth <- getMeth(cpg.reg,type = "raw") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+smoothmeth <- getMeth(cpg.reg,type = "smooth") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+names(rawmeth)[1:2] = names(smoothmeth)[1:2] = pData(cpg.keep)$allele
+meth.tb <- bind_rows(list(
+  raw = rawmeth %>%
+  gather(allele,freq,paternal,maternal),
+  smooth = smoothmeth %>%
+  gather(allele,freq,paternal,maternal)),.id = "what")
+
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[1],pal[4])
+plotpath <- file.path(plotdir,"200425_dmr_region_eg.pdf")
+pdf(plotpath,height = 3, width = 4, useDingbats = F)
+ggplot(meth.tb,aes( x = start, y = freq, color = allele)) +
+  facet_wrap(~what,nrow = 2,scales = "free") +
+  geom_line() +
+  geom_rect(data = reg,inherit.aes = F,aes(xmin = start, xmax = end), ymin = -Inf, ymax = Inf, alpha = 0.3, fill = "red") +
+  coord_cartesian(xlim = c(plotwin$start,plotwin$end)) +
+  geom_rug(color = "black", alpha = 0.2, sides = "b",size = 0.3) +
+  lims(y = c(0,1)) +
+  scale_color_manual(values = hap_pal)
+dev.off()
+
+# GpC
+regs <- dars.sig %>%
+  arrange(desc(abs(meandiff)))
+reg <- regs[2,]
+reg.gr <- GRanges(reg)
+regwin.gr <- resize(reg.gr,width = 2*width(reg.gr) + 5e3 ,fix = "center")
+plotwin <- resize(reg.gr,width = 2*width(reg.gr) + 2e3 ,fix = "center") %>%
+  as_tibble()
+gpc.reg <- gpc.keep[overlapsAny(gpc.keep,regwin.gr),]
+coords <- as_tibble(granges(gpc.reg))
+rawmeth <- getMeth(gpc.reg,type = "raw") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+smoothmeth <- getMeth(gpc.reg,type = "smooth") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+names(rawmeth)[1:2] = names(smoothmeth)[1:2] = pData(gpc.keep)$allele
+meth.tb <- bind_rows(list(
+  raw = rawmeth %>%
+  gather(allele,freq,paternal,maternal),
+  smooth = smoothmeth %>%
+  gather(allele,freq,paternal,maternal)),.id = "what")
+
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[1],pal[4])
+plotpath <- file.path(plotdir,"200425_dar_region_eg.pdf")
+pdf(plotpath,height = 3, width = 4, useDingbats = F)
+ggplot(meth.tb,aes( x = start, y = freq, color = allele)) +
+  facet_wrap(~what,nrow = 2,scales = "free") +
+  geom_line() +
+  geom_rect(data = reg,inherit.aes = F,aes(xmin = start, xmax = end), ymin = -Inf, ymax = Inf, alpha = 0.3, fill = "red") +
+  coord_cartesian(xlim = c(plotwin$start,plotwin$end)) +
+  geom_rug(color = "black", alpha = 0.2, sides = "b",size = 0.3) +
+  lims(y = c(0,1)) +
+  scale_color_manual(values = hap_pal)
+dev.off()
+```
+
+### get annotations
+```{r annotations, eval = T, include = FALSE, cache=T }
+# transcripts
+tx_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_transcripts.bed"
+trans_all <- read_tsv(tx_fp, col_names = c("chrom","start","end","txid","score","strand","ensid","hgnc")) %>%
+  mutate(start = start + 1) # convert it from bed to normal format
+trans <- trans_all %>%
+  arrange(chrom,start,end) %>%
+  distinct(chrom,start,end,ensid, .keep_all =T)
+# genes
+genes_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_genes.bed"
+genes_all <- read_tsv(genes_fp, col_names = c("chrom","start","end","ensid","score","strand","hgnc")) %>%
+  mutate(start = start + 1) # convert it from bed to normal format
+genes <- genes_all %>%
+  arrange(chrom,start,end) %>%
+  distinct(chrom,start,end,ensid, .keep_all =T)
+# X inactivation 
+xci_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hap/XCI_escape_Suppl.Table.8.txt"
+xci.raw <- read_tsv(xci_fp)
+# strip version from gene id
+xci <- xci.raw %>%
+  transmute(ensid = sapply(strsplit(`Gene ID`,"[.]"),"[[",1) , hgnc = `Gene name`, qval_escape = `q-value`) %>%
+  mutate(escape = ifelse(qval_escape < 0.01, "Escape","XCI"))
+table(xci$escape)
+ensid <- sapply(strsplit(genes$ensid,"[.]"),"[[",1)
+xci.dat <- xci[xci$ensid %in% ensid,]
+xci_genes.list <- lapply(xci$ensid,function(x)which(ensid == x))
+
+xci_genes.tb <- bind_rows(lapply(seq_along(xci_genes.list),function(i){
+  tibble(xci_idx = i, ensidx = xci_genes.list[[i]])})) %>%
+  mutate(xci = xci$escape[xci_idx]) 
+
+# let's label genetype into genes's
+genes <- genes %>%
+  mutate(
+    ensidx = seq(nrow(genes)),
+    genetype = case_when(
+      ensidx %in% xci_genes.tb$ensidx ~ xci_genes.tb$xci[match(ensidx,xci_genes.tb$ensidx)],
+      chrom != "chrX" ~ "Autosomal",
+      TRUE ~ "unknown"))
+
+# allele-specific rna expression in GM by rna consortium
+gmexp <- read_tsv("/uru/Data/Nanopore/projects/nanonome/database/Supplementary_Tables_S5.HaplotypingStatsBinom_HEADER_181030.txt",comment = "#S")
+names(gmexp)[1] <- "ensid"
+# require 80 % bias
+gmexp <- gmexp %>%
+  mutate(ase = case_when(
+      Maternal >= 0.8 ~ "Maternal",
+      Paternal >= 0.8 ~ "Paternal",
+      TRUE ~ "Unassigned"))
+genes$ase <- gmexp$ase[match(ensid,gmexp$ensid)]
+
+# imprinted genes :
+imprint_fp <- "/uru/Data/Nanopore/projects/nanonome/regs/imprinted_gene_names_both.txt"
+imprint_hgnc <- read_tsv(imprint_fp,col_names = "hgnc")$hgnc
+imprint_hgnc <- imprint_hgnc[imprint_hgnc %in% genes$hgnc]
+genes <- genes %>%
+  mutate(genetype = ifelse(hgnc %in% imprint_hgnc,"imprint",genetype))
+
+# get tss
+tss <- genes %>%
+  mutate(start = ifelse(strand == "-",end,start),
+    end = start) %>%
+  arrange(chrom,start) %>%
+  distinct(chrom,start,ensid, .keep_all =T)
+tss.gr <- GRanges(tss)
+table(tss$genetype)
+
+genes %>%
+  filter(genetype == "Escape")
+
+# more annotation : regulatory regions
+regulatory_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_regulatory_features.bed"
+regulatory <- read_tsv(regulatory_fp,col_names = c("chrom","start","end","type"))
+
+# CTCF motifs
+ctcf_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/CTCF_bindingsites_hg38.bed"
+ctcf <- read_tsv(ctcf_fp,col_names = c("chrom","start","end"))
+# replace ctcf binding sites in regulatory data with better ctcf binding sites
+regulatory <- regulatory %>%
+  filter(type != "CTCF_binding_site") %>%
+  bind_rows(ctcf %>% mutate(type = "CTCF_binding_site"))
+
+# let's also only look at ctcf, enhancer, and TF binding sites
+regulatory <- regulatory %>%
+  filter(type %in% c("CTCF_binding_site","enhancer","TF_binding_site"))
+regulatory.gr <- GRanges(regulatory)
+# at least 1kb region
+winsize <- 1e3
+regulregs <- regulatory %>%
+  mutate(width = end - start + 1,
+    center = floor((start + end + 1)/2),
+    start = ifelse(width < winsize , center - winsize/2,start),
+    end = ifelse(width < winsize , center + winsize/2,end)
+  )
+# combine with tss regs
+tssregs <- tss %>%
+  mutate(
+    start = start - winsize/2,
+    end = end + winsize/2)
+# fracts of regions with data
+anno.tb <- bind_rows(
+  tssregs %>%
+    dplyr::select(chrom,start,end,regtype = genetype),
+  regulregs %>%
+    dplyr::select(chrom,start,end,regtype = type))
+annoregs.gr <- GRanges(anno.tb)
+# let's do this for both haplotyped and normal data
+cpgovl <- findOverlaps(cpg.keep,annoregs.gr)
+gpcovl <- findOverlaps(gpc.keep,annoregs.gr)
+cpgnonhapovl <- findOverlaps(cpgnonhap.keep,annoregs.gr)
+gpcnonhapovl <- findOverlaps(gpcnonhap.keep,annoregs.gr)
+# at least 5 sites?
+thr <- 5
+cpgidx <- as_tibble(cpgovl) %>%
+  group_by(subjectHits) %>%
+  summarize( n = n()) %>%
+  filter( n >= thr) %>%
+  .$subjectHits
+gpcidx <- as_tibble(gpcovl) %>%
+  group_by(subjectHits) %>%
+  summarize( n = n()) %>%
+  filter( n >= thr) %>%
+  .$subjectHits
+cpgnonhapidx <- as_tibble(cpgnonhapovl) %>%
+  group_by(subjectHits) %>%
+  summarize( n = n()) %>%
+  filter( n >= thr) %>%
+  .$subjectHits
+gpcnonhapidx <- as_tibble(gpcnonhapovl) %>%
+  group_by(subjectHits) %>%
+  summarize( n = n()) %>%
+  filter( n >= thr) %>%
+  .$subjectHits
+
+anno.tb$gpcnonhap <- anno.tb$cpgnonhap <- anno.tb$cpg <- anno.tb$gpc <- "nocov"
+anno.tb$cpg[cpgidx] <- "covered"
+anno.tb$gpc[gpcidx] <- "covered"
+anno.tb$cpgnonhap[cpgnonhapidx] <- "covered"
+anno.tb$gpcnonhap[gpcnonhapidx] <- "covered"
+anno.covered <- anno.tb %>%
+  mutate(
+    covered = ifelse(cpg == "covered" & gpc == "covered","covered","not"),
+    nonhap_covered = ifelse(cpgnonhap == "covered" & gpcnonhap == "covered","covered","not"))
+# let's collapse all genes?
+anno.covered <- anno.covered %>%
+  mutate(regtype = ifelse(regtype %in% c("Autosomal","unknown","XCI","Escape"),"TSS",regtype))
+hap.covnum <- anno.covered %>%
+  group_by(covered,regtype) %>%
+  summarize(n = n()) %>%
+  spread(covered,n) %>%
+  mutate(tot = covered + not, frac = covered/tot)
+nonhap.covnum <- anno.covered %>%
+  group_by(nonhap_covered,regtype) %>%
+  summarize(n = n()) %>%
+  spread(nonhap_covered,n) %>%
+  mutate(tot = covered + not, frac = covered/tot)
+covered.sum <- nonhap.covnum %>%
+  dplyr::select("Region Type" = regtype,
+    "Total" = tot, 
+    "Covered Before Phasing" = covered,
+    "Fraction Covered" = frac) %>%
+  mutate("Covered After Phasing" = hap.covnum$covered,
+    "Fraction Covered Phased" = hap.covnum$frac)
+as.data.frame(covered.sum)
+outpath <- file.path(plotdir,"200226_gm12878_context_coverage.tsv")
+write_tsv(covered.sum,outpath)
+# compare frac of total regions in nonhap vs hap
+sum(hap.covnum$covered)/sum(nonhap.covnum$covered)
+
+# keep anno that are covered in hap
+anno.keep <- anno.covered %>%
+  filter(covered == "covered")
+#tss <- tss[overlapsAny(tss.gr,GRanges(anno.keep)),]
+#tss.gr <- GRanges(tss)
+
+```
+
+### promoter region 500 bp
+
+```{r prom_fisher, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+prom <- promoters(tss.gr,upstream = 250, downstream = 250 )
+cpgovl <- findOverlaps(cpg.keep,prom)
+gpcovl <- findOverlaps(gpc.keep,prom)
+# data in prom
+cpg.prom <- cpg.keep[queryHits(cpgovl),]
+gpc.prom <- gpc.keep[queryHits(gpcovl),]
+# get meth
+# cpg
+bs.prom <- cpg.prom
+promidx <- subjectHits(cpgovl)
+mfreq <- getMeth(bs.prom) %>% as_tibble()
+m <- getCoverage(bs.prom,type = "M") %>% as_tibble()
+cov <- getCoverage(bs.prom,type = "Cov") %>% as_tibble()
+names(mfreq) <- names(m) <- names(cov) <- pData(bs.prom)$allele
+cpg.tb <- tibble(pat_freq = mfreq$paternal, mat_freq = mfreq$maternal, 
+  pat_m = m$paternal, mat_m = m$maternal,
+  pat_cov = cov$paternal, mat_cov = cov$maternal,
+  tssidx = promidx
+)
+# cpg
+bs.prom <- gpc.prom 
+promidx <- subjectHits(gpcovl)
+mfreq <- getMeth(bs.prom) %>% as_tibble()
+m <- getCoverage(bs.prom,type = "M") %>% as_tibble()
+cov <- getCoverage(bs.prom,type = "Cov") %>% as_tibble()
+names(mfreq) <- names(m) <- names(cov) <- pData(bs.prom)$allele
+gpc.tb <- tibble(pat_freq = mfreq$paternal, mat_freq = mfreq$maternal, 
+  pat_m = m$paternal, mat_m = m$maternal,
+  pat_cov = cov$paternal, mat_cov = cov$maternal,
+  tssidx = promidx
+)
+# combine and get per-tss
+prommeth.tb <- bind_rows(list(
+    cpg = cpg.tb, gpc = gpc.tb),.id = "mod") %>%
+  group_by(mod,tssidx) %>%
+  summarize( pat_freq = mean(pat_freq),
+    mat_freq = mean(mat_freq),
+    pat_m = sum(pat_m), mat_m = sum(mat_m),
+    pat_cov = sum(pat_cov), mat_cov = sum(mat_cov)) %>%
+  ungroup()
+# fisher's test
+prommeth.tb <- prommeth.tb %>%
+  rowwise() %>%
+  mutate(
+    mat_um = mat_cov - mat_m, pat_um = pat_cov - pat_m,
+    pval = fisher.test(
+      x = matrix(data = c(pat_m,mat_m,pat_um,mat_um),ncol = 2))$p.value) %>%
+  ungroup() %>%
+  group_by(mod) %>%
+  mutate(adj_pval = p.adjust(pval,method = "BH")) %>%
+  ungroup()
+# significant if pval < 0.01
+prommeth.tb <- prommeth.tb %>%
+  mutate(sig = ifelse(adj_pval < 0.05, "sig","insig"))
+
+# add gene type information
+prommeth.tb <- prommeth.tb %>%
+  mutate(
+    hgnc = tss$hgnc[tssidx],
+    genetype = tss$genetype[tssidx])
+
+# add direction
+prommeth.tb <- prommeth.tb %>%
+  mutate(direction = case_when(
+      pat_freq > mat_freq ~ "paternal",
+      mat_freq > pat_freq ~ "maternal",
+      TRUE ~ "None"))
+
+prommeth.tb %>%
+  group_by(mod,genetype,sig,direction) %>%
+  summarize( n = n()) %>%
+  as.data.frame()
+
+prommeth.tb %>%
+  filter(hgnc == "XIST") %>%
+  as.data.frame()
+
+```
+
+### promoter region dmr
+
+To validate alle-specific epigenome, look at promoter regions
+
+```{r diff_prom, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# let's first check distance to the closest TSS and plot distances?
+dmrs.dist <- as.data.frame(distanceToNearest(dmrsig.gr,tss.gr,ignore.strand = T)) %>%
+  filter(distance < 1e4)
+dars.dist <- as.data.frame(distanceToNearest(darsig.gr,tss.gr,ignore.strand = T)) %>%
+  filter(distance < 1e4)
+dmrdist.den <- density(dmrs.dist$distance)
+dmrdist.den$x[which.max(dmrdist.den$y)]
+dardist.den <- density(dars.dist$distance)
+dardist.den$x[which.max(dardist.den$y)]
+
+# let's use DMRs and DARs that are within 500bp of TSSs
+tssregs <- resize(tss.gr,width = 1000, fix = "center")
+dmrovl <- findOverlaps(dmrsig.gr,tssregs)
+darovl <- findOverlaps(darsig.gr,tssregs)
+
+# give tssidx and select the biggest difference (meandiff * n) if multiple
+dmrs.tss <- dmrs.sig[queryHits(dmrovl),] %>%
+  mutate(
+    tssidx = subjectHits(dmrovl),
+    tsspos = tss$start[tssidx],
+    totdiff = meandiff * n) %>%
+  group_by(tssidx) %>%
+  filter(abs(totdiff) == max(abs(totdiff))) %>%
+  ungroup()
+
+dars.tss <- dars.sig[queryHits(darovl),] %>%
+  mutate(
+    tssidx = subjectHits(darovl),
+    tsspos = tss$start[tssidx],
+    n = idxEnd - idxStart + 1,
+    totdiff = meandiff * n) %>%
+  group_by(tssidx) %>%
+  filter(abs(totdiff) == max(abs(totdiff))) %>%
+  ungroup()
+
+# quick compare
+tss %>% group_by(chrom) %>% summarize( n()) %>% as.data.frame()
+dmrs.tss %>%
+  distinct(chr,start,end,direction) %>%
+  mutate(chrx = ifelse(chr == "chrX","Yes","No")) %>%
+  group_by(chrx,direction) %>%
+  summarize( n = n())
+dars.tss %>%
+  distinct(chr,start,end,direction) %>%
+  mutate(chrx = ifelse(chr == "chrX","Yes","No")) %>%
+  group_by(chrx,direction) %>%
+  summarize( n = n())
+## promoter meth is more as expected - hypermethylated in paternal; but that imbalance is not really that huge
+## promoter accessibility is completely biased on the other hand - good
+
+# label gene type
+dmrs.tss  <- dmrs.tss %>%
+  mutate(genetype = tss$genetype[tssidx] )
+dars.tss  <- dars.tss %>%
+  mutate(genetype = tss$genetype[tssidx] )
+dmrs.sum <- dmrs.tss %>%
+  group_by(genetype,direction) %>%
+  summarize(n = n()) %>%
+  spread(direction,n)
+dars.sum <- dars.tss %>%
+  group_by(genetype,direction) %>%
+  summarize(n = n()) %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0)
+
+# output
+tb <- bind_rows(list(dmr = dmrs.tss,dar = dars.tss),.id = "what")
+diff.tb <- tb %>%
+  dplyr::select(tssidx,what,direction) %>%
+  spread(what,direction) %>%
+  mutate(
+    Methylation = case_when(
+      dmr == "up" ~ "Paternal",
+      dmr == "down" ~ "Maternal",
+      TRUE ~ "None"),
+    Accessibility = case_when(
+      dar == "up" ~ "Paternal",
+      dar == "down" ~ "Maternal",
+      TRUE ~ "None")) 
+diff.tb <- diff.tb %>%
+  mutate(hgnc = tssregs$hgnc[tssidx],
+    ensid = tssregs$ensid[tssidx],
+    pos = tss$start[tssidx],
+    strand = tss$strand[tssidx],
+    chrom = tss$chrom[tssidx],
+    genetype = tss$genetype[tssidx]
+  ) 
+diff.tb %>%
+  filter(Methylation != "None", Accessibility != "None")  %>%
+  group_by(genetype) %>%
+  summarize(n())
+
+out.tb <- diff.tb %>%
+  mutate(concordant = case_when(
+      Methylation == "Paternal" & Accessibility == "Maternal" ~ "Maternal",
+      Methylation == "Maternal" & Accessibility == "Paternal" ~ "Paternal",
+      TRUE ~ "None")) %>%
+  dplyr::select(Ensembl_ID = ensid,Chromosome = chrom,Transcription_Start_Site = pos,Strand = strand,Symbol = hgnc,
+    Higher_Methylation = Methylation,Higher_Accessibility = Accessibility, Concordant_Activity = concordant)
+out.tb %>%
+  filter(Methylation != "None", Accessibility != "None")  %>%
+  filter(Methylation != Accessibility) %>%
+  mutate(chrx = ifelse(Chromosome == "chrX", "chrx","auto")) %>%
+  group_by(chrx,Methylation,Accessibility) %>%
+  summarize(n())
+out.tb %>%
+  filter(Chromosome == "chrX") %>%
+  filter(Methylation != "None", Accessibility != "None")  %>%
+  filter(Methylation != Accessibility)  %>%
+  filter(Methylation == "Maternal") %>% .$Symbol
+
+
+outpath <- file.path(plotdir,"200801_haplotype_DMR_DAR_gene_promoters.tsv")
+write_tsv(out.tb,outpath)
+
+# how many concordant?
+diffmeth.ovl <- dmrs.tss %>%
+  mutate(dar = dars.tss$meandiff[match(dmrs.tss$tssidx,dars.tss$tssidx)]) %>%
+  na.omit()
+conc.tss <- diffmeth.ovl %>%
+  distinct(chr,start,end,direction,tssidx,.keep_all = T) %>%
+  mutate(concordant = ifelse(sign(meandiff) != sign(dar),"conc","inconc")) %>%
+  filter(concordant == "conc") %>%
+  mutate(direction = ifelse(direction == "up", "Maternal","Paternal"))
+conc.chrom <- conc.tss %>%
+  group_by(chr,direction) %>%
+  summarize(n  = n()) %>%
+  ungroup() %>%
+  mutate(chr = as.character(chr), 
+    chrnum = as.numeric(sapply(strsplit(chr,"chr"),"[[",2))) %>%
+  replace_na(list(chrnum = 23)) %>%
+  mutate(chrnum = factor(chrnum)) 
+
+conc.chrom %>% as.data.frame()
+conc.chrom %>% summarize(n = sum(n))
+conc.chrom %>% filter( chr != "chrX") %>% group_by(direction) %>% summarize(n = sum(n))
+idx <- conc.tss %>%
+  filter(chr == "chrX",direction == "Paternal")  %>% .$tssidx
+as.data.frame(tss[idx,])
+ 
+conc.sum <- diffmeth.ovl %>%
+  distinct(chr,start,end,direction,.keep_all = T) %>%
+  mutate(chrx = ifelse(chr == "chrX","Yes","No"),
+    concordant = ifelse(sign(meandiff) != sign(dar),"conc","inconc")) %>%
+  group_by(genetype,concordant,direction) %>%
+  summarize( n = n()) %>%
+  mutate(lab = paste(concordant,direction)) %>%
+  ungroup() %>%
+  dplyr::select(-concordant,-direction) %>%
+  spread(lab,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(tot = `conc down` + `conc up` + `inconc down`) %>%
+  gather(lab,n,-genetype,-tot) %>%
+  mutate(frac = n/tot)
+
+# let's summarize
+tssmeth.sum <- covered_num %>%
+  mutate(
+    "CpG P > M" = dmrs.sum$up,
+    "CpG M > P" = dmrs.sum$down,
+    "GpC P > M" = dars.sum$up,
+    "GpC M > P" = dars.sum$down
+  ) %>%
+  dplyr::select(-not) 
+# meandiffs
+tssdiff <- tss  %>%
+  mutate(cpgdiff = 0, gpcdiff = 0) %>%
+  dplyr::select(-gpc,-cpg) 
+tssdiff$cpgdiff[dmrs.tss$tssidx] <- dmrs.tss$meandiff
+tssdiff$gpcdiff[dars.tss$tssidx] <- dars.tss$meandiff
+# cpg diff in ase genes that have dmrs??
+tssdiff %>%
+  filter(cpgdiff != 0,chrom != "chrX", !is.na(ase))  %>%
+  dplyr::select(gpcdiff,cpgdiff, ase) %>%
+  group_by(ase) %>%
+  summarize( n = n(), cpg = mean(cpgdiff), gpc= mean(gpcdiff))
+# gpc diff in ase genes that have dars??
+tssdiff %>%
+  filter(gpcdiff != 0,chrom != "chrX", !is.na(ase))  %>%
+  dplyr::select(gpcdiff,cpgdiff, ase) %>%
+  group_by(ase) %>%
+  summarize( n = n(), cpg = mean(cpgdiff), gpc= mean(gpcdiff))
+# both
+tssdiff %>%
+  filter(cpgdiff != 0, gpcdiff != 0,chrom != "chrX", !is.na(ase))  %>%
+  dplyr::select(gpcdiff,cpgdiff, ase) 
+
+# directions
+tssmeth <- tss %>% 
+  mutate(
+  "CpG P > M" = 0,
+  "CpG M > P" = 0,
+  "GpC P > M" = 0,
+  "GpC M > P" = 0)
+tssmeth$`CpG P > M`[dmrs.tss[dmrs.tss$direction == "up",]$tssidx] <- 1
+tssmeth$`CpG M > P`[dmrs.tss[dmrs.tss$direction == "down",]$tssidx] <- 1
+tssmeth$`GpC P > M`[dars.tss[dars.tss$direction == "up",]$tssidx] <- 1
+tssmeth$`GpC M > P`[dars.tss[dars.tss$direction == "down",]$tssidx] <- 1
+# output a list of diffmeth tss in a table
+tssmeth.tb <- tssmeth %>%
+#  filter(cpg == "covered", gpc == "covered") %>%
+  mutate(
+    "Higher CpG" = case_when(
+      `CpG M > P` == 1 ~ "Maternal",
+      `CpG P > M` == 1 ~ "Paternal",
+      TRUE ~ "None"),
+    "Higher GpC" = case_when(
+      `GpC M > P` == 1 ~ "Maternal",
+      `GpC P > M` == 1 ~ "Paternal",
+      TRUE ~ "None")) %>%
+  dplyr::select(chromosome = chrom,start,end,ensembl_gene_id = ensid,
+    strand,Gene_Symbol = hgnc,genetype,`Higher CpG`,`Higher GpC`) 
+tssmeth.out <- tssmeth.tb %>%
+  filter(`Higher CpG` != "None" | `Higher GpC` != "None")
+tssmeth.out %>%
+  filter(`Higher CpG` != "None" & `Higher GpC` != "None") %>%
+  filter(`Higher CpG` != `Higher GpC`)
+tssmeth.out %>%
+  filter(`Higher CpG` != "None" & `Higher GpC` != "None") 
+tssmeth.out %>%
+  filter(`Higher CpG` != "None" & `Higher GpC` != "None") %>%
+  filter(`Higher CpG` != `Higher GpC`) %>%
+  group_by(`Higher GpC`, genetype) %>%
+  summarize(n =n())
+
+
+outpath <- file.path(plotdir,"200801_diffmeth_gene_promoters.tsv")
+write_tsv(tssmeth.out,outpath)
+tssmeth.both <- tssmeth.out %>%
+  filter(`Higher CpG` != "None", `Higher GpC` != "None") %>%
+  group_by(genetype,`Higher CpG`,`Higher GpC`) %>%
+  summarize( n= n())
+both.tot <- sum(tssmeth.both$n)
+tssmeth.conc <- tssmeth.both %>%
+  filter(`Higher CpG` != `Higher GpC`)
+conc.tot <- sum(tssmeth.conc$n)
+
+# compared to all that is covered
+tssmeth %>%
+  filter(cpg == "covered", gpc == "covered") %>%
+  distinct(hgnc,.keep_all = T) %>%
+  group_by(genetype) %>%
+  summarize(n = n())
+
+table(xci$escape)
+
+# upset
+# let's gather to gene level
+# if multiple transcripts have a signature, take maximum occurrence
+# if there is a tx with both, take that
+genemeth <- tssmeth %>%
+  filter(cpg == "covered", gpc == "covered")  %>%
+  dplyr::select(gene = ensid,cm = `CpG M > P`, cp = `CpG P > M`, gm = `GpC M > P`, gp = `GpC P > M`)  %>%
+  group_by(gene,cm,cp,gm,gp) %>%
+  summarize( n = n()) %>%
+  rowwise() %>%
+  mutate(lab = paste(cm,cp,gm,gp), diffn = sum(cm,cp,gm,gp)) %>%
+  group_by(gene) %>%
+  filter(diffn == max(diffn))  %>% # first filtering for having both cpg and gpc diff
+  filter(n == max(n)) %>% # then filter for largest n
+  ungroup()  %>%
+  filter(!duplicated(gene))  %>% # remove conflicting genes %>%
+  dplyr::select(ensid = gene,`CpG M > P` = cm, `CpG P > M` = cp, `GpC M > P` = gm, `GpC P > M` = gp) 
+
+# all
+upset.tb <- genemeth %>%
+  dplyr::select(-ensid) %>%
+  as.data.frame()
+# by genetype
+upset.all <- genemeth %>%
+  mutate(genetype = tss$genetype[match(ensid,tss$ensid)]) %>%
+  rowwise() %>%
+  mutate(None = ifelse(sum(`CpG M > P`,`CpG P > M`, `GpC M > P`, `GpC P > M`) == 0, 1, 0)) %>%
+  ungroup() %>%
+  group_by(genetype)
+upset.list <- upset.all %>%
+  dplyr::select(-ensid) %>%
+  group_split(keep = F)
+upset.names <- upset.all %>%
+  group_keys() %>% .$genetype
+
+```
+```{r prom_chrom, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[1],pal[4])
+
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_promtoer_chroms.pdf")
+pdf(plotpath, height = 1.5, width = 5,useDingbats = F)
+ggplot(conc.chrom,aes( x = chrnum, fill = direction, y = n)) +
+  geom_bar(stat = "identity",position = "dodge") +
+  scale_fill_manual(values = hap_pal) +
+  coord_cartesian(ylim = c(0,5)) +
+  labs( x = "Chromosome", y = "Count")
+dev.off()
+```
+```{r prom_upset, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plots.list <- lapply(upset.list,function(x){
+  upset(as.data.frame(x), 
+    sets = c("None","GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+  })
+
+pal <- pal_npg("nrc")(9)
+pal_xci <- c(pal[9],pal[4],pal[8])
+# plot metaplot
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_promoter_upset_include_none.pdf")
+pdf(plotpath, height = 2, width = 3,useDingbats = F)
+upset(upset.tb,
+    sets = c("GpC M > P","GpC P > M","CpG M > P","CpG P > M"),
+    keep.order = T, mb.ratio = c(0.6,0.4))
+for (i in seq_along(plots.list)){
+  print(plots.list[[i]])
+  grid.text(upset.names[i],x = 0.15, y=0.95, gp=gpar(fontsize=10))
+}
+dev.off()
+```
+```{r prom_eg, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+tss.cand <- tss.diffmeth %>%
+  filter(concordant == "concordant", genetype == "imprint") 
+tss.sel <- tss.cand[3,] %>% as.data.frame()
+sel.gr <- GRanges(tss.sel)
+dmr.sel <- dmrs.sig[nearest(sel.gr,dmrsig.gr),]
+dar.sel <- dars.sig[nearest(sel.gr,darsig.gr),]
+tss.reg <- tss.sel %>%
+  mutate(start = start - 1e3, end = end + 1e3)
+
+reg <- tss.reg %>%
+  mutate(start = min(start,dmr.sel$start - 500,dar.sel$start - 500)-500, 
+    end = max(end,dmr.sel$end + 500,dar.sel$end + 500)+500)
+reg.gr <- GRanges(reg)
+regwin.gr <- resize(reg.gr,width = 2*width(reg.gr) + 5e3 ,fix = "center")
+#plotwin <- resize(reg.gr,width = 2*width(reg.gr) + 2e3 ,fix = "center") %>%
+#  as_tibble()
+
+# cpg
+cpg.reg <- cpg.keep[overlapsAny(cpg.keep,regwin.gr),]
+coords <- as_tibble(granges(cpg.reg))
+cpgmeth <- getMeth(cpg.reg,type = "smooth") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+names(cpgmeth)[1:2] = pData(cpg.keep)$allele
+# gpc
+gpc.reg <- gpc.keep[overlapsAny(gpc.keep,regwin.gr),]
+coords <- as_tibble(granges(gpc.reg))
+gpcmeth <- getMeth(gpc.reg,type = "smooth") %>%
+  as_tibble() %>%
+  bind_cols(coords)
+names(gpcmeth)[1:2] = pData(gpc.keep)$allele
+# combine
+meth.tb <- bind_rows(list(
+    cpg = cpgmeth %>% gather (allele,freq,paternal,maternal),
+    gpc = gpcmeth %>% gather (allele,freq,paternal,maternal)),.id = "mod")
+# dmr/dar 
+rect.tb <- tibble(
+  mod = c("cpg","gpc"),
+  start = c(dmr.sel$start,dar.sel$start),
+  end = c(dmr.sel$end,dar.sel$end))
+
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[1],pal[4])
+plotpath <- file.path(plotdir,"200801_prom_concordant_region.pdf")
+pdf(plotpath,height = 2, width = 7, useDingbats = F)
+ggplot(meth.tb,aes( x = start, y = freq, color = allele)) +
+  facet_wrap(~mod,ncol = 2,scales = "free") +
+  geom_line() +
+  geom_vline(xintercept = tss.sel$start,linetype = "dashed") +
+  geom_rect(data = rect.tb,inherit.aes = F,aes(xmin = start, xmax = end), ymin = -Inf, ymax = Inf, alpha = 0.3, fill = "red") +
+  coord_cartesian(xlim = c(reg$start,reg$end)) +
+  geom_rug(color = "black", alpha = 0.2, sides = "b",size = 0.3) +
+  lims(y = c(0,1)) +
+  scale_color_manual(values = hap_pal) +
+  labs(title = paste(tss.sel$hgnc,tss.sel$strand,sep=" : "), x = paste("Coordinate on ",tss.sel$chrom), y = "Frequency")
+dev.off()
+```
+
+#### let's validate by comparing autosomal vs XCI vs XCI escape gene promoters?
+
+```{r XCI_metaplot, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# first let's add in region methylation comparisons
+cpgregs <- resize(tss.gr,width = 400,fix = "center")
+gpcregs <- resize(tss.gr,width = 100,fix = "center")
+cpg.regmeth <- getMeth(cpg.keep,cpgregs,what = "perRegion")
+gpc.regmeth <- getMeth(gpc.keep,gpcregs,what = "perRegion")
+cpgregmeth.tb <- as_tibble(cpg.regmeth) %>%
+  mutate(tssidx = seq(nrow(cpg.regmeth)))
+names(cpgregmeth.tb)[1:2] <- pData(cpg.keep)$allele
+gpcregmeth.tb <- as_tibble(gpc.regmeth) %>%
+  mutate(tssidx = seq(nrow(gpc.regmeth)))
+names(gpcregmeth.tb)[1:2] <- pData(gpc.keep)$allele
+# combine 
+regmeth.tb <- bind_rows(list(cpg = cpgregmeth.tb,gpc = gpcregmeth.tb),.id = "mod") %>%
+  na.omit()
+# genetype label
+auto.idx <- which(tss$chrom != "chrX")
+regmeth.tb <- regmeth.tb %>%
+  mutate(genetype = tss$genetype[tssidx],
+    ase = tss$ase[tssidx],
+    methdiff = paternal -maternal 
+  ) %>%
+  filter(!genetype %in% c( "imprint", "unknown"))
+regmeth.gather  <- regmeth.tb %>%
+  gather(allele,freq,paternal,maternal)
+regmeth.gather %>%
+  group_by(mod,genetype,allele) %>%
+  summarize( mean(freq),n = n())
+# then comapre cpg diff to gpc diff
+regmeth.spread <- regmeth.gather %>%
+  dplyr::select(mod,tssidx,genetype,methdiff) %>%
+  distinct() %>%
+  spread(mod,methdiff)
+# rank-sum test?
+wilcox.tb <- regmeth.gather %>%
+  group_by(genetype,mod) %>%
+  summarize(pval = wilcox.test(freq ~ allele)$p.value)
+# ase
+regmeth.gather %>%
+  mutate(chrom = tss$chrom[tssidx]) %>%
+#  filter(chrom == "chrX") %>%
+  group_by(mod,ase,allele) %>%
+  summarize( mean(freq), n= n())
+
+# 2kb region around tss
+plotregs <- resize(tss.gr,width = 2e3,fix = "center")
+cpg.regs <- cpg.keep[overlapsAny(cpg.keep,plotregs),]
+gpc.regs <- gpc.keep[overlapsAny(gpc.keep,plotregs),]
+cpgmeth.regs <- getMeth(cpg.regs)
+gpcmeth.regs <- getMeth(gpc.regs)
+# get idx of tss regs
+cpg.ovl <- findOverlaps(cpg.regs,plotregs)
+gpc.ovl <- findOverlaps(gpc.regs,plotregs)
+cpgmeth.tb <- as_tibble(cpgmeth.regs[queryHits(cpg.ovl),]) %>%
+  mutate(tssidx = subjectHits(cpg.ovl),
+    chrom = as.character(seqnames(cpg.regs)[queryHits(cpg.ovl)]),
+    pos = start(cpg.regs)[queryHits(cpg.ovl)],
+  )
+names(cpgmeth.tb)[1:2] <- pData(cpg.keep)$allele
+gpcmeth.tb <- as_tibble(gpcmeth.regs[queryHits(gpc.ovl),]) %>%
+  mutate(tssidx = subjectHits(gpc.ovl),
+    chrom = as.character(seqnames(gpc.regs)[queryHits(gpc.ovl)]),
+    pos = start(gpc.regs)[queryHits(gpc.ovl)])
+names(gpcmeth.tb)[1:2] <- pData(gpc.keep)$allele
+# combine cpg and gpc
+meth.tb <- bind_rows(list(cpg = cpgmeth.tb, gpc = gpcmeth.tb),.id = "mod")
+# get distance to tss and annotate ensid
+meth.tb <- meth.tb %>%
+  mutate(
+    ensid = tss$ensid[tssidx],
+    genetype = tss$genetype[tssidx],
+    tss_pos = tss$start[tssidx],
+    tss_strand = tss$strand[tssidx],
+    tss_dist = ifelse(tss_strand == "-",tss_pos - pos, pos - tss_pos)
+  )
+meth.tb %>%
+  distinct(ensid,genetype) %>%
+  group_by(genetype) %>%
+  summarize(n())
+# label autosomal, XCI, and escape
+#meth.tb <- meth.tb %>%
+#  mutate(genetype = case_when(
+#      tssidx %in% xci_tss.tb$tss_idx ~ xci_tss.tb$xci[match(tssidx,xci_tss.tb$tss_idx)],
+#      chrom != "chrX" ~ "Autosomal",
+#      TRUE ~ "unknown"))
+#table(meth.tb$genetype)
+# remove unknown x chrom  and gather
+meth.gather <- meth.tb %>%
+  filter(genetype != "unknown") %>%
+  gather(allele,freq,paternal,maternal)
+# split into list
+meth.gather <- meth.gather %>%
+  mutate(dist = tss_dist) %>%
+  group_by(mod,genetype,allele) 
+meth.list <- meth.gather %>%
+  group_split()
+meth.keys <- meth.gather %>%
+  group_keys()
+agg.list <- lapply(meth.list,aggregate_methylation)
+agg.tb <- bind_rows(lapply(seq_along(agg.list),function(i){
+    bind_cols(agg.list[[i]],meth.keys[rep(i,nrow(agg.list[[i]])),]) }))
+
+```
+
+```{r XCI_validation_plot, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[1],pal[4])
+pal <- pal_npg("nrc")(9)
+pal_xci <- c(pal[9],pal[4],pal[8])
+# plot metaplot
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_promoter_validation_metaplot.pdf")
+pdf(plotpath, height = 4, width = 4)
+ggplot(agg.tb,aes( x = dist, y = freq, color = allele)) +
+  facet_wrap(~ genetype + mod,ncol= 2) +
+#  facet_wrap(~mod + allele,ncol= 4,labeller= as_labeller(c(paternal = "Paternal (Xi)", maternal = "Maternal (Xa)",cpg = "CpG Methylation", gpc = "GpC Accessibility"))) +
+  geom_line(alpha = 0.8) + 
+  scale_color_manual(values = hap_pal) +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  labs( x = "Distance to TSS", y = "Methylation Frequency") +
+  lims( y = c(0,.65)) +
+  coord_cartesian(clip = "off")
+dev.off()
+gs <- unique(regmeth.gather$genetype)
+regmeth.plt  <- regmeth.gather %>%
+  mutate(genetype = factor(genetype,levels = c(gs[1],gs[3],gs[2])))
+regmeth.tb %>%
+  group_by(genetype,mod) %>%
+  summarize(n())
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_promoter_validation.pdf")
+pdf(plotpath, height = 3, width = 3)
+ggplot(regmeth.plt,aes( x = genetype, fill = allele, y = freq)) +
+  facet_wrap(~mod,scales = "free",nrow= 2,labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility"))) +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(values = hap_pal) +
+  geom_boxplot(outlier.shape = NA) +
+  labs( x = "Gene Type", y = "Methylation Frequency") +
+  coord_cartesian(clip = "off")
+ggplot(regmeth.tb,aes( x = methdiff, fill = genetype)) +
+  facet_wrap(~mod,scales = "free",nrow= 2,labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility"))) +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(values = pal_xci) +
+  geom_density(alpha = 0.5) +
+  labs( x = "Methylation Difference ( Pat - Mat)", y = "Density") +
+  coord_cartesian(ylim = c(0,3))
+#ggplot(regmeth.spread,aes(x = gpc, y = cpg)) +
+#  facet_wrap(~genetype) +
+#  geom_point(alpha = 0.2) +
+#  coord_fixed()
+
+dev.off()
+
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_promoter_validation_pairwise.pdf")
+pdf(plotpath, height = 3, width = 4)
+for ( g in unique(regmeth.tb$genetype)){
+  g <- ggplot(regmeth.tb %>% filter(genetype == g),aes( x = maternal, y = paternal)) +
+    facet_wrap(~mod, ncol = 2) +
+    geom_point() +
+    coord_fixed() +
+    labs(title = g) +
+    lims( x = c(0,1), y = c(0,1))
+  print(g)
+}
+dev.off()
+```
+#### how do chrX genes without X inactivation look
+
+```{r XCI_escape, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+esc.ensid <- upset.all %>% filter(genetype == "unknown", None != 1) %>% .$ensid
+tss.esc <- tss[tss$ensid %in% esc.ensid,] 
+esc.cpgregs <- resize(GRanges(tss.esc),width = 500, fix = "center")
+esc.gpcregs <- resize(GRanges(tss.esc),width = 200, fix = "center")
+
+cpg.ovl <- findOverlaps(cpg.keep,esc.cpgregs)
+gpc.ovl <- findOverlaps(gpc.keep,esc.cpgregs)
+
+cpg.tb <- as_tibble(getMeth(cpg.keep[queryHits(cpg.ovl),])) %>%
+  mutate(txid = tss.esc$txid[subjectHits(cpg.ovl)])
+gpc.tb <- as_tibble(getMeth(gpc.keep[queryHits(gpc.ovl),])) %>%
+  mutate(txid = tss.esc$txid[subjectHits(gpc.ovl)])
+names(cpg.tb)[1:2] <- pData(cpg.keep)$allele
+names(gpc.tb)[1:2] <- pData(gpc.keep)$allele
+
+meth.tb <- bind_rows(list(cpg = cpg.tb,gpc = gpc.tb),.id = "mod")
+
+plotpath <- file.path(plotdir,"200227_gm12878_haplotype_xci_escape_candidate_pairwise.pdf")
+pdf(plotpath,height = 3, width = 4, useDingbats = F)
+ggplot(meth.tb,aes( x = maternal, y = paternal)) +
+  facet_wrap(~mod) + 
+  geom_bin2d() +
+  coord_fixed() 
+#  scale_fill_gradient(trans = "log10")
+dev.off()
+```
+
+
+### all regulatory features
+
+```{r regulatory, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# let's redefine anno
+# 1e3 around tss
+side <- 500
+tssregs.tb <- tss %>%
+  mutate( start = start - side, end = end + side, type = paste0("TSS_",genetype)) 
+# intergenenic
+#trans.tb <- trans %>% mutate(type = paste("Gene_Body_",genetype))
+genes.tb <- genes %>% mutate(type = paste0("Gene_Body_",genetype))
+# for regulatory, let's make minimum 1kb
+regul_regs <- regulatory %>%
+  mutate(
+    center = floor((start + end +1)/2),
+    width = end - start ,
+    start = ifelse(width < side, center - side/2, start),
+    end = ifelse(width < side, center + side/2, start))
+# combine
+anno <- bind_rows(regul_regs,tssregs.tb,genes.tb) %>%
+  dplyr::select(chrom,start,end,type)
+# get non-intersecting regions per region type
+anno <- anno %>% group_by(type)
+anno.list <- anno %>%
+  group_split()
+names(anno.list) <- anno %>% group_keys() %>% .$type
+anno.regs <- bind_rows(lapply(anno.list,function(x){
+  gr <- GRanges(x)
+  as_tibble(intersect(gr,gr)) %>% 
+    dplyr::select(chrom = seqnames, start,end) %>%
+    mutate(chrom = as.character(chrom))
+    }),.id = "type")
+anno.regs %>% filter(chrom == "chrX") %>% group_by(type) %>%
+  summarize( sum(end - start))
+annoregs.gr <- GRanges(anno.regs)
+# overlap dmrs/dars with anno
+dmrovl <- findOverlaps(dmrsig.gr,annoregs.gr)
+darovl <- findOverlaps(darsig.gr,annoregs.gr)
+dmr.anno <- bind_cols(dmrs.sig[queryHits(dmrovl),],anno.regs[subjectHits(dmrovl),])
+dar.anno <- bind_cols(dars.sig[queryHits(darovl),],anno.regs[subjectHits(darovl),])
+
+###################################
+# chrx
+###################################
+###################################
+# concordant DMR/DARs
+###################################
+# how are concordant regions spread out?
+ovl <- findOverlaps(dmrsig.gr,darsig.gr)
+dmrs.ovl <- dmrs.sig[queryHits(ovl),]
+dars.ovl <- dars.sig[subjectHits(ovl),]
+ovl.gr <- pintersect(GRanges(dmrs.ovl),GRanges(dars.ovl))
+conc <- bind_cols(
+  as_tibble(ovl.gr) %>% dplyr::select(seqnames,start,end),
+  dmrs.ovl %>% dplyr::select(dmr_direction = direction, dmr_one = average_one, dmr_two = average_two, dmr_meandiff = meandiff),
+  dars.ovl %>% dplyr::select(dar_direction = direction, dar_one = average_one, dar_two = average_two, dar_meandiff = meandiff)) %>%
+  filter(dmr_direction != dar_direction)
+conc.gr <- GRanges(conc)
+conc_anno <- as_tibble(distanceToNearest(conc.gr,annoregs.gr)) %>%
+  mutate(type = anno.regs$type[subjectHits],
+    direction = conc$dar_direction[queryHits],
+    chrom = conc$seqnames[queryHits]
+  )
+table(conc_anno$type)
+# enrichment?
+# get clusteres that have data
+chrs <- as.character(seqnames(cpg.keep))
+positions  <- start(cpg.keep)
+cpg.cid <- bsseq:::clusterMaker(chrs,positions)
+cpg.clusters <- tibble(idx = seq_along(cpg.cid),cid = cpg.cid) %>%
+  group_by(cid) %>%
+  summarize(idxStart = min(idx), idxEnd = max(idx)) %>%
+  mutate(chr = chrs[idxStart], start = positions[idxStart], end = positions[idxEnd])
+chrs <- as.character(seqnames(gpc.keep))
+positions  <- start(gpc.keep)
+gpc.cid <- bsseq:::clusterMaker(chrs,positions)
+gpc.clusters <- tibble(idx = seq_along(gpc.cid),cid = gpc.cid) %>%
+  group_by(cid) %>%
+  summarize(idxStart = min(idx), idxEnd = max(idx)) %>%
+  mutate(chr = chrs[idxStart], start = positions[idxStart], end = positions[idxEnd])
+cpgcl.gr <- GRanges(cpg.clusters)
+gpccl.gr <- GRanges(gpc.clusters)
+# find intersections b/w data and annotation regions
+anno.cpg <- bind_rows(lapply(anno.list,function(x){
+  gr <- GRanges(x)
+  as_tibble(intersect(gr,cpgcl.gr)) %>% 
+    dplyr::select(chrom = seqnames, start,end) %>%
+    mutate(chrom = as.character(chrom))
+    }),.id = "type")
+anno.gpc <- bind_rows(lapply(anno.list,function(x){
+  gr <- GRanges(x)
+  as_tibble(intersect(gr,gpccl.gr)) %>% 
+    dplyr::select(chrom = seqnames, start,end) %>%
+    mutate(chrom = as.character(chrom))
+    }),.id = "type")
+anno.both <- bind_rows(lapply(anno.list,function(x){
+  gr <- GRanges(x)
+  as_tibble(intersect(intersect(gr,cpgcl.gr),gpccl.gr)) %>% 
+    dplyr::select(chrom = seqnames, start,end) %>%
+    mutate(chrom = as.character(chrom))
+    }),.id = "type")
+# fraction of data that are in anno regions
+both.gr <- intersect(GRanges(cpg.clusters),GRanges(gpc.clusters))
+both.totwidth <- sum(width(both.gr[seqnames(both.gr) == "chrX"]))
+both.regwidth <- anno.both %>%
+  filter(chrom == "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / both.totwidth)
+# fraction of concordant in each region type
+concnum <- nrow(conc %>% filter(seqnames == "chrX"))
+conc %>% filter(seqnames == "chrX") %>% group_by(dar_direction) %>% summarize(n())
+conc.enrich <- conc_anno %>%
+  filter(chrom == "chrX") %>%
+  group_by(type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate( frac = n/concnum,
+    expected = both.regwidth$frac[match(type,both.regwidth$type)],
+    enrichment = frac/expected
+  )
+
+# combine
+methdiff.anno <- bind_rows(list(cpg = dmr.anno,gpc = dar.anno),.id = "mod") 
+#####################
+# dmrs + dars
+###################
+# expected counts?
+# first get sizes
+anno.chrx <- anno.regs %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type))
+# enrichment
+# fraction of data that are in regions - chrX only
+cpg_chrxsize <- cpg.clusters %>%
+  filter(chr == "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  summarize( totwidth= sum(width)) %>% .$totwidth
+gpc_chrxsize <- gpc.clusters %>%
+  filter(chr == "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  summarize( totwidth= sum(width)) %>% .$totwidth
+cpg_regwidth <- anno.cpg %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / cpg_chrxsize)
+gpc_regwidth <- anno.gpc %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / gpc_chrxsize)
+# fraction of dmrs and dars in chrx
+dmr_chrxnum <- dmrs.sig %>%
+  filter(chr == "chrX") %>%
+  summarize( n = n()) %>% .$n
+dar_chrxnum <- dars.sig %>%
+  filter(chr == "chrX") %>%
+  summarize( n = n()) %>% .$n
+chrx.enrich <- methdiff.anno %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  group_by(mod,type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"), 
+    frac = ifelse(mod == "cpg",n/dmr_chrxnum,n/dar_chrxnum),
+    expected = ifelse(mod == "cpg",cpg_regwidth$frac[match(type,cpg_regwidth$type)],gpc_regwidth$frac[match(type,gpc_regwidth$type)]),
+    enrichment = frac/expected
+  )
+chrx.enrich %>%
+  group_by(mod,type) %>%
+  summarize( sum(enrichment))
+# combine cpg,gpc, and conc
+all.enrich <- bind_rows(chrx.enrich,
+  conc.enrich %>% mutate(mod = "conc") %>% 
+    mutate(direction = ifelse(direction == "down","Maternal","Paternal"))
+) %>%
+  filter(!grepl("imprint",type ))
+offset <- 1
+enrich.ratios <- all.enrich %>%
+  dplyr::select(mod,type,direction,enrichment) %>%
+  spread(direction,enrichment) %>%
+  replace(is.na(.),0) %>%
+  mutate(logratio = log2((Maternal+offset)/(Paternal+offset)))
+enrich.ratios %>% as.data.frame()
+enrich.gather <- enrich.ratios %>%
+  gather(direction, Enrichment, Maternal, Paternal)
+# add n
+all.enrich <- all.enrich %>% 
+  mutate(lab = paste(mod,type,direction))
+enrich.gather <- enrich.gather %>%
+  mutate(lab = paste(mod,type,direction),
+    n = all.enrich$n[match(lab,all.enrich$lab)]
+  ) %>%
+  replace_na(list(n = 0))
+enrich.gather %>% as.data.frame()
+
+methdiff.anno %>%
+  filter(chrom == "chrX") %>%
+  group_by(mod,direction,type) %>%
+  summarize( mean(average_two)) 
+methdiff.gather  <-  methdiff.anno %>%
+  gather(hap,freq,average_one,average_two)  %>%
+  mutate(hap = ifelse(hap == "average_one","Maternal","Paternal"))
+
+# summarize
+chrx.sum <- methdiff.anno %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  group_by(mod,type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"))  
+# get frac
+chrx.sum <- chrx.sum %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = Maternal + Paternal ) %>%
+  gather(direction,n,Maternal,Paternal) %>%
+  mutate(Fraction = n/total)
+# all dmrs/dars
+chrx.allnum <- bind_rows(list(cpg = dmrs.sig, gpc = dars.sig),.id = "mod")  %>%
+  filter(chr == "chrX") %>%
+  group_by(direction,mod) %>%
+  summarize( n= n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"))  %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = Maternal + Paternal ) %>%
+  gather(direction,n,Maternal,Paternal) %>%
+  mutate(Fraction = n/total, type = "All") 
+# add to chrx sum
+chrx.sum <- bind_rows(chrx.sum,chrx.allnum)
+```
+```{r chrx_regulatory_histograms, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[2],pal[3])
+# order the types
+plt <- enrich.gather %>%
+  mutate(type = case_when(
+      type == "CTCF_binding_site" ~ "CTCF",
+      type == "TF_binding_site" ~ "TF",
+      type == "enhancer" ~ "Enhancer",
+      TRUE ~ type),
+    Direction = case_when(
+      direction == "Maternal" ~ "Xa (Maternal)",
+      direction == "Paternal" ~ "Xi (Paternal)"),
+    context = case_when(
+      grepl("TSS",type) ~ "TSS",
+      grepl("Gene_Body",type) ~ "Gene Body",
+      TRUE ~ "Regulatory")
+  )
+levs <- unique(plt$type)
+plt <- plt %>%
+  mutate(type = factor(type,levels = c("CTCF","TF","Enhancer","Gene_Body_XCI","Gene_Body_Escape","Gene_Body_unknown","TSS_XCI","TSS_Escape","TSS_unknown")),
+      mod = factor(mod,levels = c("cpg","gpc","conc")))
+half.tb <- plt %>%
+  group_by(mod,type) %>%
+  summarize( tot = sum(Enrichment), totn = sum(n)) %>%
+  mutate(half = tot/2, idx = as.numeric(type), 
+    xmin = idx - 0.45, xmax = idx + 0.5,
+    lab = as.character(round(tot,1)),
+    halfcnt = totn/2
+  )
+# Let's save the data as a table to provide as a supp table
+out.tb <- plt %>%
+  dplyr::select(-logratio,-lab, -context, -direction) %>%
+  dplyr::rename(Type = mod, Context = type, Higher = Direction, Number = n) %>%
+  mutate(Type = case_when(
+      Type == "conc" ~ "Concordant",
+      Type == "cpg" ~ "DMR",
+      Type == "gpc" ~ "DAR"),
+    Enrichment = round(Enrichment,3),
+    ) %>%
+  pivot_wider(names_from = Higher, values_from = c(Enrichment,Number), names_sep = " in ")
+outpath <- file.path(plotdir,"200801_gm12878_haplotype_chrx_genome_context_bar_data.tsv")
+write_tsv(out.tb,outpath)
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_chrx_genome_context_bar.pdf")
+pdf(plotpath, height = 6, width = 4,useDingbats = F)
+ggplot(plt,aes(x = type, fill = Direction,y = Enrichment)) +
+  facet_wrap(~mod,nrow = 3,scales = "free",labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",conc = "Concordant"))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_segment(inherit.aes = F, data = half.tb, mapping = aes(x = xmin, xend = xmax, y = half, yend = half), linetype = "dotted", size = 0.3) +
+  geom_text(inherit.aes = F, data = half.tb, mapping = aes(x = idx, y = tot, label = lab), size = 2, hjust = 0.5,vjust = -0.5) +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "Enrichment") +
+  coord_cartesian(clip = "off")
+#  coord_cartesian(ylim = c(0,12))
+ggplot(plt,aes(x = type, fill = Direction,y = n)) +
+  facet_wrap(~mod,nrow = 3,scales = "free",labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",conc = "Concordant"))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_bar(stat = "identity") + 
+  geom_segment(inherit.aes = F, data = half.tb, mapping = aes(x = xmin, xend = xmax, y = halfcnt, yend = halfcnt), linetype = "dotted", size = 0.3) +
+  geom_text(inherit.aes = F, data = half.tb, mapping = aes(x = idx, y = totn, label = totn), size = 2, hjust = 0.5,vjust = -0.5) +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "Number") +
+  coord_cartesian(clip = "off")
+dev.off()
+
+# separate by context
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_chrx_genome_context_bar_separate.pdf")
+pdf(plotpath, height = 8, width = 6,useDingbats = F)
+ggplot(plt,aes(x = type, fill = Direction,y = Enrichment)) +
+  facet_wrap(~mod + context,nrow = 3,scales = "free",
+    labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",conc = "Concordant",
+        TSS = "TSS", `Gene Body` = "Gene Body", Regulatory = "Regulatory"
+        ))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "Enrichment") +
+  coord_cartesian(clip = "off")
+dev.off()
+# 
+# log ratio
+plotpath <- file.path(plotdir,"200801_gm12878_haplotype_chrx_genome_context_logratio.pdf")
+pdf(plotpath, height = 3, width = 4,useDingbats = F)
+ggplot(plt %>% filter(direction == "Maternal"),aes(x = type, fill = mod,y = logratio)) +
+#  facet_wrap(~mod,nrow = 3,scales = "free",labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",conc = "Concordant"))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+#  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "log2(Maternal/Paternal)") +
+  coord_cartesian(clip = "off")
+dev.off()
+
+```
+
+```{r autosome_regulatory_enrich, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# fraction of data that are in anno regions
+both.totwidth <- sum(width(both.gr[seqnames(both.gr) != "chrX"]))
+both.regwidth <- anno.both %>%
+  filter(chrom != "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / both.totwidth)
+# fraction of concordant in each region type
+concnum <- nrow(conc %>% filter(seqnames != "chrX"))
+conc %>% filter(seqnames != "chrX") %>% group_by(dar_direction) %>% summarize(n())
+conc.enrich <- conc_anno %>%
+  filter(chrom != "chrX") %>%
+  group_by(type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate( frac = n/concnum,
+    expected = both.regwidth$frac[match(type,both.regwidth$type)],
+    enrichment = frac/expected
+  )
+
+# combine
+#####################
+# dmrs + dars
+###################
+# expected counts?
+# first get sizes
+anno.auto <- anno.regs %>%
+  filter(chrom != "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type))
+# enrichment
+# fraction of data that are in regions - chrX only
+cpg_autosize <- cpg.clusters %>%
+  filter(chr != "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  summarize( totwidth= sum(width)) %>% .$totwidth
+gpc_autosize <- gpc.clusters %>%
+  filter(chr != "chrX") %>%
+  mutate(width = end -start + 1) %>%
+  summarize( totwidth= sum(width)) %>% .$totwidth
+cpg_regwidth <- anno.cpg %>%
+  filter(chrom != "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / cpg_autosize)
+gpc_regwidth <- anno.gpc %>%
+  filter(chrom != "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  mutate(width = end -start + 1) %>%
+  group_by(type) %>%
+  summarize( width= sum(width)) %>%
+  mutate(frac = width / gpc_autosize)
+# fraction of dmrs and dars in chrx
+dmr_autonum <- dmrs.sig %>%
+  filter(chr != "chrX") %>%
+  summarize( n = n()) %>% .$n
+dar_autonum <- dars.sig %>%
+  filter(chr != "chrX") %>%
+  summarize( n = n()) %>% .$n
+auto.enrich <- methdiff.anno %>%
+  filter(chrom != "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  group_by(mod,type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"), 
+    frac = ifelse(mod == "cpg",n/dmr_autonum,n/dar_autonum),
+    expected = ifelse(mod == "cpg",cpg_regwidth$frac[match(type,cpg_regwidth$type)],gpc_regwidth$frac[match(type,gpc_regwidth$type)]),
+    enrichment = frac/expected
+  )
+
+# summarize
+chrx.sum <- methdiff.anno %>%
+  filter(chrom == "chrX") %>%
+  mutate( type = ifelse(type %in% c("unknown","XCI","Escape"),"TSS",type)) %>%
+  group_by(mod,type,direction) %>%
+  summarize( n =n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"))  
+# get frac
+chrx.sum <- chrx.sum %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = Maternal + Paternal ) %>%
+  gather(direction,n,Maternal,Paternal) %>%
+  mutate(Fraction = n/total)
+# all dmrs/dars
+chrx.allnum <- bind_rows(list(cpg = dmrs.sig, gpc = dars.sig),.id = "mod")  %>%
+  filter(chr == "chrX") %>%
+  group_by(direction,mod) %>%
+  summarize( n= n()) %>%
+  ungroup() %>%
+  mutate(direction = ifelse(direction == "down","Maternal","Paternal"))  %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = Maternal + Paternal ) %>%
+  gather(direction,n,Maternal,Paternal) %>%
+  mutate(Fraction = n/total, type = "All") 
+# add to chrx sum
+chrx.sum <- bind_rows(chrx.sum,chrx.allnum)
+```
+```{r auto_regulatory_histograms, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- wes_palette("Zissou1")
+hap_pal <- c(pal[2],pal[3])
+plt <- bind_rows(auto.enrich, conc.enrich %>% mutate(mod = "konc")) %>%
+  mutate(type = case_when(
+      type == "CTCF_binding_site" ~ "CTCF",
+      type == "TF_binding_site" ~ "TF",
+      type == "enhancer" ~ "Enhancer",
+      type == "Gene_Body" ~ "Gene Body",
+      TRUE ~ type),
+    Direction = case_when(
+      direction %in% c("Maternal","down") ~ "Maternal",
+      direction %in% c("Paternal","up") ~ "Paternal"),
+    Enrichment = enrichment
+  )
+levs <- unique(plt$type)
+plt <- plt %>%
+  mutate(type = factor(type,levels = c(levs[1],levs[5],levs[2],levs[3],levs[4],levs[6],levs[7])))
+plt %>% as.data.frame()
+# maximize based on non-genebody
+maxn <- plt %>%
+  filter(type != "Gene Body") %>%
+  group_by(mod) %>%
+  summarize(maxn = max(n)) %>%
+  mutate(ylim = ceiling((maxn + maxn/2)/10)*10)
+plt <- plt %>%
+  mutate(nadjust = ifelse(n >= maxn$ylim[match(mod,maxn$mod)],maxn$ylim[match(mod,maxn$mod)],n))
+plt %>%
+  filter(type == "Gene Body")
+  
+half.tb <- plt %>%
+  group_by(mod,type) %>%
+  summarize( tot = sum(Enrichment), totn = sum(n)) %>%
+  mutate(half = tot/2, idx = as.numeric(type), 
+    xmin = idx - 0.45, xmax = idx + 0.5,
+    lab = as.character(round(tot,1)),
+    halfcnt = totn/2
+  )
+# Let's save the data as a table to provide as a supp table
+out.tb <- plt %>%
+  dplyr::select(-direction,-frac,-expected,-enrichment,-nadjust) %>%
+  dplyr::rename(Type = mod, Context = type, Higher = Direction, Number = n) %>%
+  mutate(Type = case_when(
+      Type == "konc" ~ "Concordant",
+      Type == "cpg" ~ "DMR",
+      Type == "gpc" ~ "DAR"),
+    Enrichment = round(Enrichment,3),
+    ) %>%
+  pivot_wider(names_from = Higher, values_from = c(Enrichment,Number), names_sep = " in ")
+outpath <- file.path(plotdir,"200802_gm12878_haplotype_auto_genome_context_bar_data.tsv")
+write_tsv(out.tb,outpath)
+plotpath <- file.path(plotdir,"200802_gm12878_haplotype_auto_genome_context_bar.pdf")
+pdf(plotpath, height = 6, width = 4,useDingbats = F)
+ggplot(plt,aes(x = type, fill = Direction,y = Enrichment)) +
+  facet_wrap(~mod,nrow = 3,scales = "free",labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",konc = "Concordant"))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_segment(inherit.aes = F, data = half.tb, mapping = aes(x = xmin, xend = xmax, y = half, yend = half), linetype = "dotted", size = 0.3) +
+  geom_text(inherit.aes = F, data = half.tb, mapping = aes(x = idx, y = tot, label = lab), size = 2, hjust = 0.5,vjust = -0.5) +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "Enrichment") +
+  coord_cartesian(clip = "off")
+#  coord_cartesian(ylim = c(0,12))
+ggplot(plt,aes(x = type, fill = Direction,y = n)) +
+  facet_wrap(~mod,nrow = 3,scales = "free",labeller= as_labeller(c(cpg = "CpG Methylation", gpc = "GpC Accessibility",konc = "Concordant"))) +
+#  geom_text(mapping = aes(label = total),y = 1, size = 2.5, angle = 45, vjust = -0.5, hjust = 0.3) +
+  geom_bar(stat = "identity") + 
+  geom_segment(inherit.aes = F, data = half.tb, mapping = aes(x = xmin, xend = xmax, y = halfcnt, yend = halfcnt), linetype = "dotted", size = 0.3) +
+  geom_text(inherit.aes = F, data = half.tb, mapping = aes(x = idx, y = totn, label = totn), size = 2, hjust = 0.5,vjust = -0.5) +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1), 
+    legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+  scale_fill_manual(name = "Higher",values = hap_pal) +
+  labs( x = "Context in X Chromosome", y = "Number") +
+  coord_cartesian(clip = "off")
+dev.off()
+```

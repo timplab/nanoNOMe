@@ -1,0 +1,165 @@
+---
+title: "nanoNOMe haplotype allele-specific genome_wide"
+author: Isac Lee
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_notebook : default
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: xelatex
+#bibliography: master.bib
+# set dir in the following function to the desired loc
+mainfont: "DejaVu Sans" # Try out some font options if xelatex
+titlefont: "DejaVu Sans" # Try out some font options if xelatex
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, 
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("~/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(biomaRt)
+library(UpSetR)
+library(grid)
+```
+
+```{r functions, include = F}
+```
+```{r data , eval = T, include = FALSE, cache=F }
+# data
+fdir = "/uru/Data/Nanopore/projects/nanonome/haplotype"
+plotdir <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/haplotypes"
+cpgpath <- file.path(fdir,"GM12878_nanoNOMe_cpg_haplotypes_bsmooth.rds")
+gpcpath <- file.path(fdir,"GM12878_nanoNOMe_gpc_haplotypes_bsmooth.rds")
+cpg <- readRDS(cpgpath)
+gpc <- readRDS(gpcpath)
+```
+
+```{r preprocess, eval = T, include = FALSE, cache=T }
+## filter by coverage ----
+cpg.cov <- getCoverage(cpg,type="Cov",what="perBase")
+keepi <- rowSums(cpg.cov > 3) == ncol(cpg.cov)
+cpg.keep <- cpg[keepi,]
+gpc.cov <- getCoverage(gpc,type="Cov",what="perBase")
+keepi <- rowSums(gpc.cov > 3) == ncol(gpc.cov)
+gpc.keep <- gpc[keepi,]
+```
+
+```{r differential, eval = T, include = FALSE, cache=T }
+outpath <- file.path(fdir,"200425_gm12878_haplotype_diffregs.rds")
+if (! exists(outpath)){
+  # first CpG
+  cpg.pd <- pData(cpg.keep)
+  onei <- which(cpg.pd$allele == "paternal")
+  twoi <- which(cpg.pd$allele == "maternal")
+  dmrs <- findDMRs(cpg.keep,onei,twoi,qcutoffs = 0.95)
+
+  # GpC peaks
+  gpc.pd <- pData(gpc.keep)
+  peaks.list <- list()
+  for (allele in gpc.pd$allele){
+    print(allele)
+    i <- which(gpc.pd$allele == allele)
+    peaks <- gpcPeakCaller(gpc.keep[,i])
+    peaks.list[[allele]] <- peaks
+  }
+  # GpC diff acc
+  peaks.mat <- GRanges(peaks.list$maternal)
+  peaks.pat <- GRanges(peaks.list$paternal)
+  ovl <- findOverlaps(peaks.mat,peaks.pat)
+  peaks.cand <- c(peaks.mat[-queryHits(ovl)],peaks.pat[-subjectHits(ovl)])
+  #peaks.cand <- setdiff(peaks.mat,peaks.pat)
+  gpc.pd <- pData(gpc.keep)
+  onei <- which(gpc.pd$allele == "paternal")
+  twoi <- which(gpc.pd$allele == "maternal")
+  dars <- compareRegions(gpc.keep,onei,twoi, regions = peaks.cand)
+
+  # output the results
+  # first as rds
+  diffregs.list <- list(dmrs = dmrs,dars = dars)
+  saveRDS(diffregs.list,outpath)
+} else {
+  cat("Reading existing differential data")
+  diffregs.list <- readRDS(outpath)
+  dmrs  <- diffregs.list$dmrs
+  dars  <- diffregs.list$dars
+}
+```
+```{r differential_output, eval = T, include = FALSE, cache=T }
+# then significant ones as tsv file
+## a = 0.01
+cpgmeth <- getMeth(cpg.keep)
+cpgdiff <- cpgmeth[,1]-cpgmeth[,2]
+cpgthr <- quantile(abs(cpgdiff),0.99,na.rm = T)
+gpcmeth <- getMeth(gpc.keep)
+gpcdiff <- gpcmeth[,1]-gpcmeth[,2]
+gpcthr <- quantile(abs(gpcdiff),0.99,na.rm = T)
+# significant
+dmrs <- dmrs %>%
+  mutate(sig = ifelse(abs(meandiff) > cpgthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+dmrs.sig <- dmrs %>%
+  filter(sig == "sig")
+dars <- dars %>%
+  mutate(
+    n = idxEnd - idxStart + 1,
+    sig = ifelse(abs(meandiff) > gpcthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+dars.sig <- dars %>%
+  filter(sig == "sig")
+if (T) {
+  # save them as tsv
+  dmrs.out <- dmrs.sig %>%
+    mutate(higher = ifelse(direction == "up","Paternal","Maternal")) %>%
+    dplyr::select(
+      Chromosome = chr,
+      Start = start,
+      End = end,
+      idxStart, idxEnd, Num_Sites = n,
+      Paternal_Observations = cov_one,
+      Maternal_Observations = cov_two,
+      Paternal_Methylated = meth_one,
+      Maternal_Methylated = meth_two,
+      Paternal_Average = average_one,
+      Maternal_Average = average_two,
+      Hypermethylated = higher,
+      Mean_Difference = meandiff,
+      Max_Difference = maxdiff,
+      p.value, adjusted.pval, 
+      Width = width) %>%
+  arrange(desc(abs(Mean_Difference)))
+  dars.out <- dars.sig %>%
+    mutate(higher = ifelse(direction == "up","Paternal","Maternal")) %>%
+    dplyr::select(
+      Chromosome = chr,
+      Start = start,
+      End = end,
+      idxStart, idxEnd, Num_Sites = n,
+      Paternal_Observations = cov_one,
+      Maternal_Observations = cov_two,
+      Paternal_Methylated = meth_one,
+      Maternal_Methylated = meth_two,
+      Paternal_Average = average_one,
+      Maternal_Average = average_two,
+      More_Accessible = higher,
+      Mean_Difference = meandiff,
+      Max_Difference = maxdiff,
+      p.value, adjusted.pval, 
+      Width = width) %>%
+  arrange(desc(abs(Mean_Difference)))
+
+  dmrs.tsv <- file.path(plotdir,"200425_gm12878_haplotype_dmrs_sig.tsv")
+  write_tsv(dmrs.out,dmrs.tsv)
+  dars.tsv <- file.path(plotdir,"200425_gm12878_haplotype_dars_sig.tsv")
+  write_tsv(dars.out,dars.tsv)
+}
+```

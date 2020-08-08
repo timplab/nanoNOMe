@@ -1,0 +1,1080 @@
+---
+title: "nanoNOMe single-read bcan"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(ggridges)
+library(mclust)
+
+
+```
+
+```{r functions, include = F}
+```
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome"
+subdir <- file.path(nanonomedir,"regs")
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/bcan"
+genes_fp <- "/uru/Data/Nanopore/projects/nanonome/bcan/bcan_diffexp_sig_genes.txt"
+regs.fp <- file.path(subdir,"200802_bcan_diffexp_tss_1kb_regs.bed")
+```
+```{r regs, eval = T, include = FALSE, cache=F }
+# genes
+genes <- read_tsv(genes_fp)
+# let's do 1kb each side from tss
+tss.sub <- genes %>%
+  mutate(start = ifelse(strand == "-",end,start), end = start)
+regs.sub <- tss.sub %>%
+  arrange(chrom,start,end) %>%
+  mutate(
+    center = start,
+    start = start - 1e3, end = end + 1e3
+  )  %>%
+  filter(start >= 0, ! chrom %in% c("chrM","chrY")) %>%
+  mutate(
+    idx = row_number())
+
+regs.out <- regs.sub
+names(regs.out)[1] <- "#chrom"
+write_tsv(regs.out,regs.fp)
+```
+
+# single-read
+
+```{r single_read_region, eval = T, include = FALSE, cache=F }
+m10_path <- file.path(nanonomedir,"pooled/mbed/MCF10A_nanoNOMe.cpggpc.meth.bed.gz")
+m7_path <- file.path(nanonomedir,"pooled/mbed/MCF7_nanoNOMe.cpggpc.meth.bed.gz")
+m231_path <- file.path(nanonomedir,"pooled/mbed/MDAMB231_nanoNOMe.cpggpc.meth.bed.gz")
+#sub
+subtag <- "diffexp_tss_1kb"
+sub10.fp = file.path(subdir,paste("MCF10A_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+sub7.fp = file.path(subdir,paste("MCF7_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+sub231.fp = file.path(subdir,paste("MCF231_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+# mbed
+
+env.list <- list(
+  bed = regs.fp,
+  sub10 = sub10.fp,
+  sub7 = sub7.fp,
+  sub231 = sub231.fp,
+  mbed10 = m10_path,
+  mbed7 = m7_path,
+  mbed231 = m231_path
+)
+do.call(Sys.setenv,env.list)
+```
+### using r to do the subsetting
+```{r}
+com <- paste("tabix",m10_path,"-R",regs.fp,">",sub10.fp)
+system(com)
+com <- paste("tabix",m7_path,"-R",regs.fp,">",sub7.fp)
+system(com)
+com <- paste("tabix",m231_path,"-R",regs.fp,">",sub231.fp)
+system(com)
+```
+
+load single-read data
+
+```{r single_read, eval = T, include = FALSE, cache=F }
+mbfp.list <- list(MCF10A = sub10.fp,MCF7 = sub7.fp , MDAMB231 = sub231.fp)
+# fetch single read data in this region
+reads.list <- lapply(mbfp.list,tabix_mbed,extcol = "motif",by = "read")
+# gather
+reads <- bind_rows(reads.list,.id = "sample")
+# separate by mod
+reads.cpg <- reads[reads$motif == "CG",]
+reads.gpc <- reads[reads$motif == "GC",]
+# remove fully methylated gpc reads
+reads.gpc <- remove_fully_methylated(reads.gpc)
+# let's just use qnames as signifier for the sample
+samp.qnames <- reads %>% dplyr::select(sample,qname = readname) %>% distinct()
+table(samp.qnames$sample)
+```
+
+```{r regs_redefine, eval = T, include = FALSE, cache=F }
+side  <- 10e3
+regs.sub <- regs.sub %>%
+  dplyr::select(-score)
+callregs <- regs.sub %>%
+  mutate(start = center - side, end = center + side)
+```
+
+# get calls, smooth gc, and add distance
+
+```{r single_read_parse, eval = T, include = FALSE, cache=F }
+# do cg and gc separately and use mclapply
+# no mclapply b/c it uses too much ram for the amount of data I'm tryying to handle
+# It will take forever to run, so I'll just run overnight
+st <- Sys.time()
+cgcalls <- bind_rows(lapply(seq(nrow(regs.sub)),function(i){
+  print(i)
+  reg <- regs.sub[i,]
+  callreg <- callregs[i,]
+  reginfo <- reg %>% 
+    dplyr::rename(regstart = start, regend = end) %>%
+    dplyr::select( - chrom) 
+  # subset reads overlapping this region
+  cg.reg <- reads.cpg %>%
+    filter(chrom == reg$chrom, start <= reg$start, end >= reg$end)
+  calls <- tibble()
+  if (nrow(cg.reg) != 0) {
+    # fix calls
+    calls <- mbedByCall(cg.reg,region = callreg, verbose = F) %>%
+      redo_mcall(1.5) 
+    # add info and label, get distance
+    calls <- calls %>%
+      bind_cols(reginfo[rep(1,nrow(calls)),]) 
+  }
+  calls
+})) 
+cgcalls <- cgcalls %>%
+  mutate(
+    center = (regstart + regend)/2,
+    distance = ifelse(strand == "-",center - start,start - center))
+Sys.time() - st
+
+# for gc, let's do all the way to runs
+st <- Sys.time()
+gcruns <- bind_rows(lapply(seq(nrow(regs.sub)),function(i){
+  print(i)
+  reg <- regs.sub[i,]
+  # subset reads overlapping this region
+  gc.reg <- reads.gpc %>%
+    filter(chrom == reg$chrom, start <= reg$start, end >= reg$end)
+  runs <- tibble()
+  if (nrow(gc.reg) != 0) {
+    callreg <- callregs[i,]
+    reginfo <- reg %>% 
+      dplyr::rename(regstart = start, regend = end) %>%
+      dplyr::select( -chrom)
+    # fix calls
+    gccalls <- mbedByCall(gc.reg,verbose = F) %>%
+      redo_mcall(1) 
+    # smooth
+    calls.reg <- gccalls %>%
+      group_by(qname)
+    calls.list <- calls.reg %>% 
+      group_split(keep = T)
+    smooth.list <- lapply(calls.list,smoothCalls,reg = callreg)
+    calls.smooth <- bind_rows(smooth.list)
+    # add info and label, get distance
+    runs <- getRuns_fast(calls.smooth) 
+    runs <- runs %>%
+      bind_cols(reginfo[rep(1,nrow(runs)),]) 
+  } 
+  runs
+}))
+gcruns <- gcruns %>%
+  mutate(
+    center = (regstart + regend)/2,
+    # get distance from center
+    start_dist = ifelse(strand == "-",center - start,start - center),
+    end_dist = ifelse(strand == "-",center - end,end - center),
+    # get abs values of distance from the center
+    distance = case_when(
+      start_dist <= 0 & end_dist >= 0 ~ 0,
+      start_dist > 0 ~ start_dist,
+      end_dist < 0 ~ abs(end_dist) 
+      ),
+    acc = ifelse( values == 0, "Closed","Open")
+  )
+gcruns.gr <- GRanges(gcruns)
+Sys.time() - st
+# output
+cgout <- file.path(subdir,"200731_MCF10AMCF7MDAMB231_nanoNOMe_tss_diffexp_20kb_singleread_cpg_calls.txt.gz")
+gcout <- file.path(subdir,"200731_MCF10AMCF7MDAMB231_nanoNOMe_tss_diffexp_20kb_singleread_gc_runs.txt.gz")
+write_tsv(cgcalls,cgout)
+write_tsv(gcruns,gcout)
+
+summary(gcruns$distance)
+summary(cgcalls$distance)
+```
+###########################################################
+# EM clustering
+###########################################################
+
+```{r combinatorial_subset, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# subset region - cpg
+cgside = 500
+cpg_tss <- cgcalls  %>%
+  filter(distance >= -cgside, distance <= cgside)
+cpg_avg <- cpg_tss %>%
+  filter(!is.na(mcall), mcall != -1) %>%
+  group_by(qname,idx) %>%
+  summarize(mfreq = mean(mcall),
+    n = n()) %>%
+  mutate(mod = "cpg")
+# gpc - just the runs within the gcside
+gcside <- 100
+gcruns_tss <- gcruns %>%
+  filter(distance >= -gcside, distance <= gcside)
+######################################################################
+# getting average methylation from runs
+######################################################################
+# recombine and limit width to the region of interest
+prot_model <- readRDS(file.path(subdir,"200317_gcruns_protein_binding_EM_model.rds")) 
+gcruns_fixed  <- fix_protein_runs(gcruns_tss,prot_model)
+gpc_avg <- gcruns_fixed %>%
+  # need to change start/end according to distance and fix the width to match that
+  mutate(start_dist = ifelse(start_dist < -gcside,-gcside,start_dist), 
+    end_dist = ifelse(end_dist > gcside,gcside,end_dist),
+    lengths = end_dist - start_dist)  %>%
+  group_by(qname,idx) %>%
+  summarize( meth = sum(lengths * values),
+    n = sum(lengths),
+    mfreq = meth/n) %>%
+  dplyr::select(-meth) %>%
+  mutate(mod = "gpc")
+gpc_avg %>%
+  summarize( mean(mfreq))
+
+# add to the cpg and make the same conversion
+meth_avg <- bind_rows(cpg_avg,gpc_avg) %>%
+  ungroup()
+meth_avg.spread <- meth_avg %>%
+#  filter(n >= 10) %>%
+  dplyr::select(-n) %>%
+  spread(mod,mfreq)  %>%
+  na.omit()
+meth_avg.gather <- meth_avg.spread %>%
+  ungroup() %>%
+  gather(mod,mfreq,cpg,gpc)
+meth_avg_labs <- paste(meth_avg.spread$qname, meth_avg.spread$idx,sep="_")
+
+# quick check
+plotpath <- file.path(plotdir,"tmp.pdf")
+pdf(plotpath)
+ggplot(meth_avg,aes(x = mfreq)) +
+  facet_wrap(~mod,nrow = 2) +
+  geom_density(alpha = 0.5)
+dev.off()
+```
+
+```{r em_clustering, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# use previously made models
+modpath <- file.path(subdir,"200402_TSS_combinatorial_cluster_models.rds")
+mods.list <- readRDS(modpath)
+cpgmod = mods.list$cpg
+gpcmod = mods.list$gpc
+cl.info <- mods.list$info
+
+# assign classification
+cpgpred <- predict(cpgmod,meth_avg.spread$cpg)
+gpcpred <- predict(gpcmod,meth_avg.spread$gpc)
+
+meth.cluster <- meth_avg.spread %>%
+  ungroup() %>%
+  mutate( 
+    cpg_cluster = factor(cpgpred$classification), 
+    gpc_cluster = factor(gpcpred$classification),
+    cluster = paste(cpg_cluster,gpc_cluster,sep="_"),
+    lab = cl.info$lab[match(cluster,cl.info$cluster)])
+meth.cluster$cpg_prob <- sapply(seq(nrow(meth.cluster)),function(i)cpgpred$z[i,meth.cluster$cpg_cluster[i]])
+meth.cluster$gpc_prob <- sapply(seq(nrow(meth.cluster)),function(i)gpcpred$z[i,meth.cluster$gpc_cluster[i]])
+
+# assign sig
+meth.cluster <- meth.cluster %>%
+  mutate(
+    cpg_sig = ifelse( cpg_prob > cl.info$cgthr[match(lab,cl.info$lab)] ,"sig","insig"),
+    gpc_sig = ifelse( gpc_prob > cl.info$gcthr[match(lab,cl.info$lab)] ,"sig","insig"),
+    sig = ifelse( cpg_sig == "sig" & gpc_sig == "sig","sig", "insig"), 
+    qlab = paste(qname,idx)
+  )
+
+# numbers
+cluster.num <- meth.cluster %>%
+  filter(sig == "sig") %>%
+  group_by(idx,cluster) %>%
+  summarize(n =n()) %>%
+  spread(cluster,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = `1_1`+`1_2`+`2_1`+`2_2`)  %>%
+  filter(total > 20) 
+cluster.frac <- cluster.num %>%
+  gather(cluster, n, -idx,-total) %>%
+  mutate(frac = n/total, 
+    lab = cl.info$lab[match(cluster,cl.info$cluster)]) 
+cluster.frac %>%
+  group_by(cluster) %>%
+  summarize(frac = mean(frac)) %>%
+  spread(cluster,frac)
+# only retain significant reads
+meth.cluster <- meth.cluster %>%
+  filter(sig == "sig")
+# jsut cpg cluster
+cgcluster.frac <- meth.cluster %>%
+  mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+  filter(sig == "sig") %>%
+  group_by(idx,sample,cpg_cluster) %>%
+  summarize(n =n(),meanmeth = mean(cpg)) %>%
+  group_by(idx,sample) %>%
+  mutate(total = sum(n), frac = n/total)
+cgcluster.filt <- cgcluster.frac %>%
+  filter(total >= 10) %>%
+  group_by(idx,sample) %>%
+  summarize( methdiff = max(meanmeth) - min(meanmeth),
+    fracdiff = max(frac) - min(frac) 
+  ) %>%
+  filter(methdiff >= 0.3, fracdiff <= 0.7)  %>% #ones with high enough difference in methylation and low engouh diff in fraction
+  group_by(idx) %>%
+  filter(n() == 3)
+```
+
+# analyze cluster results
+
+```{r}
+cluster.samp <- meth.cluster %>%
+  mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)])
+cluster.frac <- cluster.samp %>%
+  group_by(idx,sample,cluster) %>%
+  summarize( n = n()) %>%
+  mutate(
+    totn = sum(n),
+    frac = n/totn,
+    expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)]
+  )
+
+cluster.comp <- cluster.frac %>%
+  group_by(idx) %>%
+  filter(totn >= 10) %>% # at least 10 total reads
+  filter(length(unique(sample)) == 3) %>% # all three has data
+  dplyr::select(-n,-totn) %>%
+  spread(sample,frac) %>% # compare between samples
+  replace(is.na(.),0) %>%
+  rowwise() %>%
+  mutate(
+#    maxdiff = max(MCF7,MDAMB231) - MCF10A,
+#    mindiff = min(MCF7,MDAMB231) - MCF10A,
+#    meddiff = median(MCF7,MDAMB231) - MCF10A,
+    diff7 = MCF7 - MCF10A,
+    diff231 = MDAMB231- MCF10A
+  )
+
+cluster.n <- cluster.samp %>%
+  group_by(idx,sample,cluster) %>%
+  summarize( n = n()) %>% 
+  mutate( 
+    expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)])
+# how many concordant
+cluster.n %>%
+  group_by(cluster) %>%
+  summarize( n = sum(n)) %>%
+  mutate(frac = n/sum(n))
+clnum.spread <- cluster.n %>%
+  mutate(cluster = cl.info$lab[match(cluster,cl.info$cluster)]) %>%
+  spread(sample,n) %>%
+  pivot_wider(names_from = cluster,values_from = c(MCF10A, MCF7,MDAMB231)) %>%
+  replace(is.na(.),0) 
+clnum.out <- bind_cols(regs.sub[match(clnum.spread$idx,regs.sub$idx),],
+  clnum.spread)  %>%
+  dplyr::select(-idx,-idx1,-start,-end,-score,-expdirection1) %>%
+  mutate(expdirection = ifelse(expdirection == "down","Downregulated","Upregulated"))
+names(clnum.out)[1:6] <- c("Chromosome","Ensembl_ID","Gene_Strand","Symbol","Transcription_Start_Site","Expression_in_MCF10A_MDAMB231")
+cnames <- names(clnum.out)[7:ncol(clnum.out)]
+cnames <- str_replace(str_replace(str_replace(cnames," ; ","_")," ","_")," ","_")
+names(clnum.out)[7:ncol(clnum.out)] <- cnames
+outpath <- file.path(plotdir,"200428_MCF10A_MCF7_MDAMB231_Diffexp_Promoter_epigenetic_states.tsv")
+write_tsv(clnum.out,outpath)
+
+# select genes with not alot of read number difference
+cl.num <- cluster.samp %>%
+  group_by(idx,sample) %>%
+  summarize(n = n()) %>%
+  group_by(idx) %>%
+  summarize( maxn = max(n), minn = min(n)) %>%
+  filter(maxn - minn < minn)
+
+cluster.comp <- cluster.samp %>%
+  filter(idx %in% cl.num$idx) %>%
+  group_by(idx,sample,cluster) %>%
+  summarize( n = n()) %>%
+  spread(sample,n) %>%
+  replace(is.na(.),0) %>%
+  gather(two,num,MCF7,MDAMB231) %>%
+  mutate(diff = num - MCF10A,
+    expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)])
+# difference in active
+combstate.idx <- cluster.comp %>%
+  filter(abs(diff) >= 15,
+    cluster == "1_2"
+  )
+
+pdf(file.path(plotdir,"tmp.pdf"))
+ggplot(cluster.comp,aes( x = diff, color = expdirection)) +
+  facet_wrap(~cluster) +
+  geom_density()
+ggplot(cluster.frac,aes( x = frac, color = expdirection)) +
+  facet_wrap(~cluster) +
+  geom_density()
+dev.off()
+
+cluster.comp %>%
+  group_by(cluster,expdirection) %>%
+  summarize( mean(diff7), mean(diff231))
+
+
+```
+##################################################
+# TF binding
+##################################################
+
+```{r prot_detection, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+############################################
+# predict protein binding
+############################################
+gcruns.closed <- gcruns %>% filter(values == 0)
+prot_model <- readRDS(file.path(subdir,"200317_gcruns_protein_binding_EM_model.rds"))
+closed.clusters <- predict(prot_model,gcruns.closed$width)
+gcruns.closed <- gcruns.closed %>%
+  ungroup() %>%
+  mutate(i = seq(nrow(gcruns.closed)),
+    cluster = closed.clusters$classification) %>%
+  rowwise() %>%
+  mutate(prob = closed.clusters$z[i,cluster]) %>%
+  ungroup()
+# take protein-bound runs
+gcruns.prot <- gcruns.closed %>%
+  filter(cluster == 1) %>%
+  mutate(clab = paste(qname,start,end))
+
+# use stdev to set cutoffs
+upper <- 80
+lower <- 24
+# find protein-bound regions - regions with x number of protein binding runs to remove FPs
+prot.gr <- GRanges(gcruns.prot %>% dplyr::select(chrom,start,end))
+protcov <- coverage(prot.gr)
+protregs.list <- slice(protcov,lower = 5) # require at least 10 prot binding overlapping a given site
+protregs <- bind_rows(lapply(seq_along(protregs.list),function(i){
+  tibble(chrom = names(protregs.list)[i], 
+    start = start(protregs.list[[i]]),
+    end = end(protregs.list[[i]]))})) %>%
+  mutate(width = end -start + 1) %>%
+  filter(width <= upper, width >= lower)  %>%
+  mutate( protidx = seq(n())) %>%
+  mutate(start = start - 25, end  = end + 25) # let's also pad it a little bit
+
+# make granges
+protregs.gr <- GRanges(protregs)
+## remove regions that are within 100bps of gpc
+#gpcwin <- resize(GRanges(regs.sub),width = 201, fix = "center")
+#keepi <- !overlapsAny(protregs.gr,gpcwin)
+#protregs <- protregs[keepi,] %>%
+#  mutate( idx = seq(n()))
+#protregs.gr <- GRanges(protregs)
+
+# which of these actually ahve high protein binding fraction?
+ovl <- findOverlaps(gcruns.gr,protregs.gr)
+gcruns.protreg <- gcruns[queryHits(ovl),] %>%
+  mutate(protidx = protregs.gr$protidx[subjectHits(ovl)],
+    clab = paste(qname,start,end),
+    state = ifelse(clab %in% gcruns.prot$clab, "bound","unbound"),
+    reglab = paste(qname,protidx)
+  )
+# reads for each region
+protreg.bound <- gcruns.protreg %>%
+  filter(state == "bound")
+protreg.reads <- gcruns.protreg %>%
+  distinct(protidx,qname,reglab)  %>%
+  mutate(state = ifelse(reglab %in% protreg.bound$reglab, "bound","unbound"))
+protreg.frac <- protreg.reads %>%
+  group_by(protidx,state) %>%
+  summarize( n = n()) %>%
+  spread(state,n) %>%
+  mutate(totnum = bound + unbound, frac = bound/totnum)
+
+pdf(file.path(plotdir,"200804_protregs_frac_distro.pdf"))
+ggplot(protreg.frac,aes( x = frac)) +
+  geom_density() 
+ggplot(protreg.frac,aes( x = bound)) +
+  geom_density() 
+ggplot(protreg.frac,aes( x = totnum)) +
+  geom_density()  +
+  coord_cartesian(xlim = c(0,100))
+dev.off()
+# select those with total < 100 and bound >= 10
+protnum.filter <- protreg.frac %>%
+  filter( bound >= 20)
+
+## select significant regions and expand the region to 100bp
+#side <- 50
+#protregs.win <- protregs[protnum.filter$idx,]  %>%
+#  mutate(center = floor((start + end)/2),
+#    start = center - side, end = center + side + 1
+#  )
+# select significant regions
+protregs.win <-  protregs %>%
+  filter(protidx %in% protnum.filter$protidx)
+protwin.gr <- GRanges(protregs.win)
+# bed file
+#outpath <- file.path(subdir,"200402_GM12878_protreg.bed")
+#protregs.bed <- protregs.win %>% dplyr::select(chrom,start,end)
+#write_tsv(protregs.bed,outpath,col_names = F)
+
+
+# coordinate file
+protregs.out <- protregs.win %>%
+  transmute(coord = paste0(chrom,":",start,"-",end))
+#outpath <- file.path(subdir,"200402_GM12878_protreg_coordinates.txt")
+#write_tsv(protregs.out,outpath,col_names = F)
+```
+
+
+
+# check if any of these are happening in particular tss clusters
+```{r tss_clusters}
+regs.win <- GRanges(callregs)
+# prot regs : either all of selected or just ctcf?
+pregs <- protregs.win
+pregs.gr <- GRanges(pregs)
+ovl <- findOverlaps(pregs.gr,regs.win)
+protregs.txid <- pregs[queryHits(ovl),] %>%
+  mutate(idx = regs.win$idx[subjectHits(ovl)])
+# separate duplicated regs from unique ones - those that occur in multiple txid vs just one
+dup.idx <- unique(protregs.txid[duplicated(protregs.txid$protidx),]$protidx)
+protregs.unique <- protregs.txid[! protregs.txid$protidx %in% dup.idx,]
+protregs.dup <- protregs.txid[protregs.txid$protidx %in% dup.idx,]
+# annotate regs with txid
+# for unique regs, easy
+unique.txid <- protreg.reads %>%
+  mutate(idx = protregs.unique$idx[match(protidx,protregs.unique$protidx)]) %>%
+  filter(!is.na(idx))
+# for duplicatred regions, lapply:
+dup.txid <- bind_rows(lapply(seq(nrow(protregs.dup)),function(i){
+  x <- protregs.dup[i,]
+  protreg.reads[protreg.reads$protidx == x$protidx,] %>%
+    mutate(idx = x$idx)
+    }))
+# label
+protreads.txid <- bind_rows(unique.txid,dup.txid) %>%
+  mutate( tsslab = paste(qname,idx))
+# label sample
+protreads.samp <- protreads.txid %>%
+  mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)])
+protsamp.frac <- protreads.samp %>%
+  group_by(protidx,idx,sample,state) %>%
+  summarize( n = n()) %>%
+  spread(state,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(totn = bound + unbound,
+    frac = bound/totn,
+    expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)])
+# select idx based on protsapm.frac diff
+idx.select <- protsamp.frac %>%
+  dplyr::select(protidx,idx,sample,frac) %>%
+  spread(sample,frac) %>%
+  mutate(diff7 = MCF7 - MCF10A, diff231 = MDAMB231 - MCF10A,
+    meandiff = mean(diff7,diff231),
+    mindiff = min(abs(diff7),abs(diff231))
+  ) %>%
+  arrange(mindiff) %>%
+  filter(mindiff > 0.5)
+pdf(file.path(plotdir,"tmp.pdf"))
+ggplot(idx.select,aes( x = meandiff)) +
+  geom_density()
+dev.off()
+# output the per-sample fractions
+protsamp.protinfo <- protregs.win[match(protsamp.frac$protidx,protregs.win$protidx),] %>%
+  dplyr::select(Chromosome = chrom, Start = start, End = end)
+protsamp.tssinfo <- regs.sub[match(protsamp.frac$idx,regs.sub$idx),] %>%
+  mutate(expdirection = ifelse(expdirection == "down","Downregulated","Upregulated")) %>%
+  dplyr::select(Ensemble_ID = ensid, Transcription_Start_Site = center,
+    Symbol = hgnc, Gene_Strand = strand, Expression_in_MCF7_MDAMB231 = expdirection)
+protsamp.out <- bind_cols(protsamp.protinfo,protsamp.tssinfo,protsamp.frac) %>%
+  dplyr::select(-idx,-protidx,-totn,-expdirection) %>%
+  dplyr::rename(Bound = "bound", Unbound = "unbound", Bound_Fraction = "frac") %>%
+  pivot_wider(names_from = sample,values_from = c(Bound,Unbound,Bound_Fraction)) %>%
+  replace_na(list(
+      Bound_MCF10A = 0, Bound_MCF7 = 0, Bound_MDAMB231 = 0,
+      Unbound_MCF10A = 0, Unbound_MCF7 = 0, Unbound_MDAMB231 = 0))
+outpath <- file.path(plotdir,"200428_MCF10A_MCF7_MDAMB231_Diffexp_proteinbinding.tsv")
+write_tsv(protsamp.out,outpath)
+
+#protsamp.frac %>%
+#  filter(totn >= 10) %>%
+#  filter(frac >= 0.6) %>%
+#  group_by(expdirection,sample) %>%
+#  summarize(n (), mean(frac),median(totn))
+#
+#protsamp.diff <- protsamp.frac %>%
+#  filter(totn >= 20) %>%
+#  dplyr::select(protidx,idx,sample,frac) %>%
+#  spread(sample,frac) %>%
+#  na.omit() %>%
+#  mutate(diff7 = MCF7 - MCF10A,
+#    diff231 = MDAMB231 - MCF10A) %>%
+#  filter(sign(diff7) == sign(diff231)) %>% # only those that are in the same direction
+#  mutate(mindiff = sign(diff7) * min(abs(diff7),abs(diff231))) %>% # minimum differnece
+#  arrange(desc(abs(mindiff))) %>%
+#  mutate(expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)])
+## we can also label cluster
+protreads.cluster <- protreads.samp %>%
+  mutate(cluster = meth.cluster$cluster[match(tsslab,meth.cluster$qlab)]) %>%
+  na.omit()
+protcl.frac <- protreads.cluster %>%
+  group_by(protidx,idx,cluster,sample,state) %>%
+  summarize( n = n()) %>%
+  spread(state,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(totn = bound + unbound,
+    frac = bound/totn,
+    expdirection = regs.sub$expdirection[match(idx,regs.sub$idx)])
+# output the per-sample per-cluster fractions
+protcl.protinfo <- protregs.win[match(protcl.frac$protidx,protregs.win$protidx),] %>%
+  dplyr::select(Chromosome = chrom, Start = start, End = end)
+protcl.tssinfo <- regs.sub[match(protcl.frac$idx,regs.sub$idx),] %>%
+  mutate(expdirection = ifelse(expdirection == "down","Downregulated","Upregulated")) %>%
+  dplyr::select(Ensemble_ID = ensid, Transcription_Start_Site = center,
+    Symbol = hgnc, Gene_Strand = strand, Expression_in_MCF7_MDAMB231 = expdirection)
+protcl.out <- bind_cols(protcl.protinfo,protcl.tssinfo,protcl.frac) %>%
+  mutate(cluster = cl.info$lab[match(cluster,cl.info$cluster)]) %>%
+  dplyr::select(-idx,-protidx,-totn,-expdirection) %>%
+  dplyr::rename(Bound = "bound", Unbound = "unbound", Bound_Fraction = "frac") %>%
+  pivot_wider(names_from = c(sample,cluster),values_from = c(Bound,Unbound,Bound_Fraction))
+protcl.out[,9:32] <- protcl.out[,9:32] %>%
+  replace(is.na(.),0)
+cnames <- names(protcl.out)[9:ncol(protcl.out)]
+cnames <- str_replace(str_replace(str_replace(cnames," ; ","_")," ","_")," ","_")
+names(protcl.out)[9:ncol(protcl.out)] <- cnames
+names(protcl.out)
+outpath <- file.path(plotdir,"200428_MCF10A_MCF7_MDAMB231_Diffexp_protmoter_state_proteinbinding.tsv")
+write_tsv(protcl.out,outpath)
+
+# select 
+#idx.select <- protcl.frac %>%
+#  filter(cluster != "2_2") %>%
+#  filter(totn >= 3) %>%
+#  group_by(protidx,idx,cluster) %>%
+#  dplyr::select(-bound,-unbound,-totn) %>%
+#  spread(sample,frac) %>%
+#  na.omit() %>%
+#  mutate(diff7 = MCF7 - MCF10A, diff231 = MDAMB231 - MCF10A,
+#    mindiff = min(abs(diff7),abs(diff231)))  %>%
+#  arrange(desc(mindiff)) %>%
+#  filter( mindiff >= 0.5)
+#regs.sub[match(idx.select$idx,regs.sub$idx),]$hgnc
+
+# let's start with comb.stat
+diffactive.idx <- cluster.comp %>%
+  filter(cluster == "1_2")  %>% # jsut active
+  filter(abs(diff) >= 5) %>% # difference in number
+  group_by(idx,two) %>%
+  filter(n() != 2)  %>% # both mcf7 and mda231 %>%
+  distinct(idx)  %>%.$idx
+# then protein binding
+idx.select <- protcl.frac %>%
+  filter(cluster == "1_2") %>%
+  filter(idx %in% diffactive.idx) %>%
+  group_by(protidx,idx,cluster) %>%
+  dplyr::select(-bound,-unbound,-totn) %>%
+  spread(sample,frac) %>%
+  na.omit() %>%
+  mutate(diff7 = MCF7 - MCF10A, diff231 = MDAMB231 - MCF10A,
+    mindiff = min(abs(diff7),abs(diff231)))  %>%
+  arrange(desc(mindiff)) %>%
+  filter( mindiff >= 0.5)
+# or just by sample, not combinatorial
+idx.select <- protsamp.frac %>%
+  filter(idx%in% diffactive.idx) %>%
+  group_by(protidx,idx) %>%
+  dplyr::select(-bound,-unbound,-totn) %>%
+  spread(sample,frac) %>%
+  na.omit() %>%
+  mutate(diff7 = MCF7 - MCF10A, diff231 = MDAMB231 - MCF10A,
+    mindiff = min(abs(diff7),abs(diff231)))  %>%
+  arrange(desc(mindiff)) %>%
+  filter( mindiff >= 0.4)
+
+```
+
+
+
+##################################################################
+
+
+```{r singleread_plot_protein, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+protruns.gr <- GRanges(gcruns.prot)
+active.qnames <- meth.cluster %>%
+    filter(cluster == "1_2") %>%
+    .$qname
+# start plotting
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[4],pal[5],pal[1],pal[2], pal[7])
+plotpath <- file.path(plotdir,"200417_bcan_exp_meth_singleread_runs_protdiff.pdf")
+pdf(plotpath,width = 8, height = 3.5, useDingbats = F)
+for (i in seq(nrow(idx.select))){
+  print(i)
+  info <- idx.select[i,]
+  geneidx <- info$idx
+  protidx <- info$protidx
+  reg.sel <- regs.sub[regs.sub$idx == geneidx,]
+  pltreg <- reg.sel %>%
+    mutate(start = center - 1e3, end = center + 1e3)
+  # protein region and prot-bound runs in this prot region
+  prot.plt <- protregs.win %>% filter(protidx == info$protidx)
+  protruns.reg <- gcruns.prot[overlapsAny(protruns.gr,GRanges(prot.plt)),]
+  
+  # reads
+  cgcalls.sub <- cgcalls %>%
+    filter(idx == geneidx) %>%
+    mutate(qlab = paste(qname,geneidx))
+  cgruns.sel <- getRuns(cgcalls.sub,maxGap = 20) %>%
+    mutate(qlab = paste(qname,geneidx))
+  gcruns.sel <- gcruns %>%
+    filter(idx == geneidx) %>%
+    mutate(qlab = paste(qname,geneidx))
+  gcreads.sub <- reads.gpc %>%
+    filter((start < reg.sel$start & end > reg.sel$start) |
+      (end > reg.sel$end & start < reg.sel$end) |
+      (start >= reg.sel$start & end <= reg.sel$end))
+  gccalls.sub  <- mbedByCall(gcreads.sub,verbose = F) %>% 
+    redo_mcall(1)  %>%
+    mutate(qlab = paste(qname,geneidx))
+  # only take reads that have both cpg and gpc
+  cq <- unique(cgruns.sel$qname)
+  gq <- unique(gcruns.sel$qname)
+  qsel <- intersect(cq,gq)
+#  # also just active cluster
+#  qsel <- qsel[qsel %in% active.qnames] 
+  # order the reads
+  cgruns.samp <- cgruns.sel %>%
+    filter(qname %in% qsel) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(sample)
+  gcruns.samp <- gcruns.sel %>%
+    filter(qname %in% qsel) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) 
+  cgruns_sel.list <- cgruns.samp %>%
+    group_split()
+  ofs <- 3 # space between samples
+  cfs <- 0 # space between clusters
+  starti <- 0
+  cg_ordered.list <- list()
+  ybounds <- c()
+
+  bq <- protruns.reg %>% distinct(qname) %>% .$qname
+  for ( j in seq_along(cgruns_sel.list)) {
+    ystart <- starti + ofs * j
+    ybounds <- c(ybounds,-ystart)
+    cr <- cgruns_sel.list[[j]]
+    # order by protein binding and then cluster
+    q.ordered <- cr %>%
+      group_by(qname) %>%
+      summarize(start = min(start)) %>%
+      mutate(bound = ifelse(qname %in% bq, "bound","unbound"),
+        cluster = meth.cluster$cluster[match(qname,meth.cluster$qname)]
+        ) %>%
+      filter(!is.na(cluster)) %>%
+#      arrange(bound,cluster,start)
+      arrange(cluster,bound,start)
+    x <- tibble()
+    bounds <- tibble()
+    for (cl in unique(q.ordered$cluster)) {
+      qcl <- q.ordered %>% filter(cluster == cl) %>% .$qname
+      cr.cl <- cr %>% filter(qname %in% qcl)
+      co <- order_reads(cr.cl,  offset = ystart,qorder = qcl)
+      x <- bind_rows(x,co$x)
+      bounds <- bind_rows(bounds,co$bounds)
+      ystart <- ystart + length(qcl) + cfs
+    }
+    co.list <- list(x = x, bounds = bounds)
+#    qorder <- q.ordered$qname
+#    co.list <- order_reads(cr,  offset = ystart,qorder = qorder)
+#    ystart <- ystart + length(qorder)
+    cg_ordered.list[[j]] <- co.list
+    starti <- ystart #starti + nrow(cg_ordered.list[[j]]$bounds)
+  }
+  cg_runs.ordered <- bind_rows(lapply(cg_ordered.list,function(y)y$x))
+  cg_bounds.ordered <- bind_rows(lapply(cg_ordered.list,function(y)y$bounds))
+  gc.ordered <- order_reads(gcruns.samp,bounds = cg_bounds.ordered)
+  gc_runs.ordered <- gc.ordered$x
+  gc_bounds.ordered <- gc.ordered$bounds
+
+  runs_ordered <- bind_rows(list( cpg = cg_runs.ordered,gpc = gc_runs.ordered),.id = "mod")
+  # label the methylation states
+  runs_ordered <- runs_ordered %>%
+    mutate(
+      clab = paste(qname,start,end),
+      state = case_when(
+        mod == "gpc" & clab %in% protruns.reg$clab ~ "TF",
+        mod == "cpg" & values == 1 ~ "Methylated",
+        mod == "cpg" & values == 0 ~ "Unmethylated",
+        mod == "gpc" & values == 1 ~ "Accessible",
+        mod == "gpc" & values == 0 ~ "Inaccessible"),
+      state = factor(state,levels = c("Accessible","Inaccessible","Methylated","Unmethylated","TF"))
+    )
+  bounds_ordered <- bind_rows(list( cpg = cg_bounds.ordered,gpc = gc_bounds.ordered),.id = "mod")
+
+  # average profiles
+  cgfreq.cl <- cgcalls.sub %>%
+    filter(!is.na(mcall)) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(start,sample) %>%
+    summarize(n = n(), freq = mean(mcall))
+  gcfreq.cl <- gccalls.sub %>%
+    filter(!is.na(mcall), mcall != -1) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(start,sample) %>%
+    summarize(n = n(), freq = mean(mcall))
+  freq.cl <- bind_rows(list(cpg = cgfreq.cl,gpc = gcfreq.cl),.id = "mod")
+  #  mutate(start = start - 100, end = end + 100)
+
+  # annotation
+  maxy <- -ofs/2 #max(gc_runs.ordered$ymin)
+  miny <- min(gc_bounds.ordered$ymin)
+  start <- min(pltreg$start,prot.plt$start)
+  end <- max(pltreg$end,prot.plt$end)
+
+  # label sample
+  center <- (start + end)/2
+  samps <- cgruns.samp %>% group_keys() %>% .$sample
+  ylabs <- tibble(samp = samps, y = ybounds, x = start)
+  # center is tss
+  tss.range <- reg.sel %>%
+    mutate(start = center, end = ifelse(strand == "-", center - 500, center + 500))
+  just <- ifelse(reg.sel$strand == "+","right","left")
+  label <- ifelse(tss.range$hgnc== "",tss.range$ensid,tss.range$hgnc)
+  gtitle <- paste0(reg.sel$expdirection,"regulated in MCF-7/MDA-MB-231")
+
+  g.both <- ggplot(runs_ordered,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) +
+    facet_wrap(~mod, label = as_labeller(c(cpg = "CpG Methylation",gpc = "GpC Accessibility"))) +
+    geom_rect(data = bounds_ordered, fill = "grey90") + 
+    geom_rect(aes(fill = state))  +
+    scale_fill_manual(name = "State", values = meth_pal) +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+      legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid")
+    ) 
+  g.cgfreq <- ggplot(freq.cl %>% filter(mod == "cpg"),aes( x = start, y = freq,color = sample)) +
+    geom_smooth(se = F,span = 0.5) +
+    lims( x = c(start,end), y = c(0,1))
+  g.gcfreq <- ggplot(freq.cl %>% filter(mod == "gpc"),aes( x = start, y = freq, color = sample)) +
+    geom_smooth(se = F,span = 0.2) +
+    lims( x = c(start,end), y = c(0,1))
+  # add annotation
+  aoff <- 7
+  g.both <- g.both +
+    geom_vline(xintercept = tss.range$start , linetype = "longdash", size = 0.2) +
+    geom_segment(inherit.aes = F, data = tss.range,
+                 mapping = aes(x = start, xend = end, y = miny - aoff, yend = miny - aoff),
+                 arrow = arrow(length = unit(0.1,"cm"))) +
+    annotate("text",x = tss.range$start, y = miny -  aoff, label = label, hjust = just,size = 2.5) +
+    geom_rect(data = prot.plt, mapping = aes( xmin = start, xmax = end, ymin = -Inf, ymax = Inf), 
+      fill = "blue", color = "black", linetype = "dashed",size = 0.1,,alpha = 0.1) +
+    geom_text(inherit.aes = F, data = ylabs, mapping = aes(x = x, y = y, label = samp), size = 2.5, vjust = 0,hjust = 0) + 
+    coord_cartesian( xlim = c(start,end), ylim = c(miny - aoff - 0.5,maxy)) +
+    labs( x = paste0("Coordinate on ",reg.sel$chrom), y = "Reads", title = gtitle) +
+    theme(legend.position = "bottom")
+  print(g.both)
+#  if (i == 10){
+#    break
+#  }
+#  print(g.cgfreq)
+#  print(g.gcfreq)
+}
+dev.off()
+```
+##############################################
+
+```{r singleread_plot_protein, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+protruns.gr <- GRanges(gcruns.prot)
+active.qnames <- meth.cluster %>%
+    filter(cluster == "1_2") %>%
+    .$qname
+# start plotting
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[4],pal[5],pal[1],pal[2], pal[7])
+plotpath <- file.path(plotdir,"200417_bcan_exp_meth_singleread_runs_combstate.pdf")
+pdf(plotpath,width = 8, height = 3.5, useDingbats = F)
+for (i in seq(nrow(combstate.idx))){
+  print(i)
+  info <- combstate.idx[i,]
+  geneidx <- info$idx
+  reg.sel <- regs.sub[regs.sub$idx == geneidx,]
+  pltreg <- reg.sel %>%
+    mutate(start = center - 2e3, end = center + 2e3)
+  
+  # reads
+  cgcalls.sub <- cgcalls %>%
+    filter(idx == geneidx) %>%
+    mutate(qlab = paste(qname,geneidx))
+  cgruns.sel <- getRuns(cgcalls.sub,maxGap = 20) %>%
+    mutate(qlab = paste(qname,geneidx))
+  gcruns.sel <- gcruns %>%
+    filter(idx == geneidx) %>%
+    mutate(qlab = paste(qname,geneidx))
+  gcreads.sub <- reads.gpc %>%
+    filter((start < reg.sel$start & end > reg.sel$start) |
+      (end > reg.sel$end & start < reg.sel$end) |
+      (start >= reg.sel$start & end <= reg.sel$end))
+  gccalls.sub  <- mbedByCall(gcreads.sub,verbose = F) %>% 
+    redo_mcall(1)  %>%
+    mutate(qlab = paste(qname,geneidx))
+  # only take reads that have both cpg and gpc
+  cq <- unique(cgruns.sel$qname)
+  gq <- unique(gcruns.sel$qname)
+  qsel <- intersect(cq,gq)
+#  # also just active cluster
+#  qsel <- qsel[qsel %in% active.qnames] 
+  # order the reads
+  cgruns.samp <- cgruns.sel %>%
+    filter(qname %in% qsel) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(sample)
+  gcruns.samp <- gcruns.sel %>%
+    filter(qname %in% qsel) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) 
+  cgruns_sel.list <- cgruns.samp %>%
+    group_split()
+  ofs <- 3 # space between samples
+  cfs <- 0 # space between clusters
+  starti <- 1
+  cg_ordered.list <- list()
+  ybounds <- c()
+
+  bq <- protruns.reg %>% distinct(qname) %>% .$qname
+  for ( j in seq_along(cgruns_sel.list)) {
+    ystart <- starti + ofs * j
+    ybounds <- c(ybounds,-ystart)
+    cr <- cgruns_sel.list[[j]]
+    # order by protein binding and then cluster
+    q.ordered <- cr %>%
+      group_by(qname) %>%
+      summarize(start = min(start)) %>%
+      mutate(bound = ifelse(qname %in% bq, "bound","unbound"),
+        cluster = meth.cluster$cluster[match(qname,meth.cluster$qname)]
+        ) %>%
+      filter(!is.na(cluster)) %>%
+#      arrange(bound,cluster,start)
+      arrange(cluster,bound,start)
+    x <- tibble()
+    bounds <- tibble()
+    for (cl in unique(q.ordered$cluster)) {
+      qcl <- q.ordered %>% filter(cluster == cl) %>% .$qname
+      cr.cl <- cr %>% filter(qname %in% qcl)
+      co <- order_reads(cr.cl,  offset = ystart,qorder = qcl)
+      x <- bind_rows(x,co$x)
+      bounds <- bind_rows(bounds,co$bounds)
+      ystart <- ystart + length(qcl) + cfs
+    }
+    co.list <- list(x = x, bounds = bounds)
+#    qorder <- q.ordered$qname
+#    co.list <- order_reads(cr,  offset = ystart,qorder = qorder)
+#    ystart <- ystart + length(qorder)
+    cg_ordered.list[[j]] <- co.list
+    starti <- ystart #starti + nrow(cg_ordered.list[[j]]$bounds)
+  }
+  cg_runs.ordered <- bind_rows(lapply(cg_ordered.list,function(y)y$x))
+  cg_bounds.ordered <- bind_rows(lapply(cg_ordered.list,function(y)y$bounds))
+  gc.ordered <- order_reads(gcruns.samp,bounds = cg_bounds.ordered)
+  gc_runs.ordered <- gc.ordered$x
+  gc_bounds.ordered <- gc.ordered$bounds
+
+  runs_ordered <- bind_rows(list( cpg = cg_runs.ordered,gpc = gc_runs.ordered),.id = "mod")
+  # label the methylation states
+  runs_ordered <- runs_ordered %>%
+    mutate(
+      clab = paste(qname,start,end),
+      state = case_when(
+        mod == "gpc" & clab %in% protruns.reg$clab ~ "TF",
+        mod == "cpg" & values == 1 ~ "Methylated",
+        mod == "cpg" & values == 0 ~ "Unmethylated",
+        mod == "gpc" & values == 1 ~ "Accessible",
+        mod == "gpc" & values == 0 ~ "Inaccessible"),
+      state = factor(state,levels = c("Accessible","Inaccessible","Methylated","Unmethylated","TF"))
+    )
+  bounds_ordered <- bind_rows(list( cpg = cg_bounds.ordered,gpc = gc_bounds.ordered),.id = "mod")
+
+  # average profiles
+  cgfreq.cl <- cgcalls.sub %>%
+    filter(!is.na(mcall)) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(start,sample) %>%
+    summarize(n = n(), freq = mean(mcall))
+  gcfreq.cl <- gccalls.sub %>%
+    filter(!is.na(mcall), mcall != -1) %>%
+    mutate(sample = samp.qnames$sample[match(qname,samp.qnames$qname)]) %>%
+    group_by(start,sample) %>%
+    summarize(n = n(), freq = mean(mcall))
+  freq.cl <- bind_rows(list(cpg = cgfreq.cl,gpc = gcfreq.cl),.id = "mod")
+  #  mutate(start = start - 100, end = end + 100)
+
+  # annotation
+  maxy <- -ofs/2 #max(gc_runs.ordered$ymin)
+  miny <- min(gc_bounds.ordered$ymin)
+  start <- min(pltreg$start)#,prot.plt$start)
+  end <- max(pltreg$end)#,prot.plt$end)
+
+  # label sample
+  center <- (start + end)/2
+  samps <- cgruns.samp %>% group_keys() %>% .$sample
+  ylabs <- tibble(samp = samps, y = ybounds, x = start)
+  # center is tss
+  tss.range <- reg.sel %>%
+    mutate(start = center, end = ifelse(strand == "-", center - 500, center + 500))
+  just <- ifelse(reg.sel$strand == "+","right","left")
+  label <- ifelse(tss.range$hgnc== "",tss.range$ensid,tss.range$hgnc)
+  gtitle <- paste0(reg.sel$expdirection,"regulated in MCF-7/MDA-MB-231")
+
+  g.both <- ggplot(runs_ordered,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) +
+    facet_wrap(~mod, label = as_labeller(c(cpg = "CpG Methylation",gpc = "GpC Accessibility"))) +
+    geom_rect(data = bounds_ordered, fill = "grey90") + 
+    geom_rect(aes(fill = state))  +
+    scale_fill_manual(name = "State", values = meth_pal) +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+      legend.background = element_rect(color = "black", fill = NA, size = 0.5, linetype = "solid")
+    ) 
+  g.cgfreq <- ggplot(freq.cl %>% filter(mod == "cpg"),aes( x = start, y = freq,color = sample)) +
+    geom_smooth(se = F,span = 0.5) +
+    lims( x = c(start,end), y = c(0,1))
+  g.gcfreq <- ggplot(freq.cl %>% filter(mod == "gpc"),aes( x = start, y = freq, color = sample)) +
+    geom_smooth(se = F,span = 0.2) +
+    lims( x = c(start,end), y = c(0,1))
+  # add annotation
+  aoff <- 7
+  g.both <- g.both +
+    geom_vline(xintercept = tss.range$start , linetype = "longdash", size = 0.2) +
+    geom_segment(inherit.aes = F, data = tss.range,
+                 mapping = aes(x = start, xend = end, y = miny - aoff, yend = miny - aoff),
+                 arrow = arrow(length = unit(0.1,"cm"))) +
+    annotate("text",x = tss.range$start, y = miny -  aoff, label = label, hjust = just,size = 2.5) +
+#    geom_rect(data = prot.plt, mapping = aes( xmin = start, xmax = end, ymin = -Inf, ymax = Inf), 
+#      fill = "blue", color = "black", linetype = "dashed",size = 0.1,,alpha = 0.1) +
+    geom_text(inherit.aes = F, data = ylabs, mapping = aes(x = x, y = y, label = samp), size = 2.5, vjust = 0,hjust = 0) + 
+    coord_cartesian( xlim = c(start,end), ylim = c(miny - aoff - 0.5,maxy)) +
+    labs( x = paste0("Coordinate on ",reg.sel$chrom), y = "Reads", title = gtitle) +
+    theme(legend.position = "bottom")
+  print(g.both)
+#  if (i == 10){
+#    break
+#  }
+#  print(g.cgfreq)
+#  print(g.gcfreq)
+}
+dev.off()
+```
+##############################################
+

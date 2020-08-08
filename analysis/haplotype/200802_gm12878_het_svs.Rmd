@@ -1,0 +1,467 @@
+---
+title: "nanoNOMe Het SVs"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(UpSetR)
+library(ggsci)
+library(ggridges)
+
+
+```
+
+```{r functions, include = F}
+getQQ <- function(one,two,qs = seq(0,1,0.01)) {
+  tibble(one = quantile(one,qs,na.rm = T),
+         two = quantile(two,qs,na.rm = T),
+         qunatile = qs)
+}
+```
+
+
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome/haplotype"
+subdir <- file.path(nanonomedir,"../regs")
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/sv"
+sv_path <- file.path(nanonomedir,"sv/GM12878_nanoNOMe.hetsvs.bed")
+
+# methylation data
+# first mfreq for bulk
+mfreq.pd <- tibble(
+  mod = c("cpg","gpc"),
+  fp = paste0(nanonomedir,"/GM12878_nanoNOMe_",mod,"_haplotypes_bsmooth.rds"))
+
+# then mbed for read-level
+mbed.pd <- tibble(
+  hap = c(1,2),
+  fp = paste0(nanonomedir,"/GM12878_nanoNOMe.hap",hap,".cpggpc.meth.bed.gz"))
+```
+
+```{r bps, eval = T, include = FALSE, cache=F }
+svs <- read_tsv(sv_path) %>%
+  dplyr::rename(chrom = `#chrom`)
+
+# let's filte out svs with total num < x,numref > r and numsv < s and size < l
+x <- 100 # filter for making sure region is falsely mapped
+r <- 2 # reference thr
+s <- 20 # variant thr
+l <- 200 # length thr
+svs.filt <- svs %>%
+  filter( numref + numsv <= x,numref <= r, numsv >= s, len >= l)
+
+# quickly check number of sv by type
+table(svs.filt$svtype)/2
+
+```
+
+# first check bulk
+
+```{r read_bulk, eval = T, include = FALSE, cache=F }
+# read data
+bs.list <- lapply(mfreq.pd$fp,readRDS)
+names(bs.list) <- mfreq.pd$mod
+```
+
+### first check bulk methylation
+
+For this, I will do both INS and DEL
+
+```{r bulk_regs, eval = T, include = FALSE, cache=F }
+bp.bulk <- svs.filt %>%
+  filter(svtype %in% c("DEL","INS")) %>%
+  dplyr::select(chrom,start,end,strand,svtype,svhap)
+# region around TSS
+cpgsize <- 500
+cpg_regs <- bp.bulk %>%
+  mutate(start = ifelse(strand == "+",start - cpgsize,start),
+         end = ifelse(strand == "-",end + cpgsize, end)) %>%
+  GRanges()
+gpcsize <- 50
+gpc_regs <- bp.bulk %>%
+  mutate(start = ifelse(strand == "+",start - gpcsize,start),
+         end = ifelse(strand == "-",end + gpcsize, end)) %>%
+  GRanges()
+```
+```{r bulk_persite, eval = T, include = FALSE, cache=F }
+# to compare density, use per CpG methylation
+covthr <- 5
+# cpg
+# overlap
+cpg.ovl <- findOverlaps(bs.list$cpg,cpg_regs)
+bp_cpgovl <- cpg_regs[subjectHits(cpg.ovl)]
+cpg_bp <- bs.list$cpg[queryHits(cpg.ovl),]
+# get meth and cov
+cpgmeth_persite <- getMeth(cpg_bp,type = "smooth",what = "perBase")
+cpgcov_persite <- getCoverage(cpg_bp,type = "Cov",what = "perBase")
+# make tb
+cpgmeth.tb <- as_tibble(cpgmeth_persite)
+colnames(cpgmeth.tb)[1:2] <- pData(bs.list$cpg)$hap # add haplotype label
+cpgmeth.tb <- bind_cols(cpgmeth.tb,as_tibble(bp_cpgovl)) # add sv info
+# coverage filter
+keepi <- rowSums(cpgcov_persite >= covthr) == 2 
+cpgmeth.tb <- cpgmeth.tb[keepi,]
+# gpc
+# overlap
+gpc.ovl <- findOverlaps(bs.list$gpc,gpc_regs)
+bp_gpcovl <- gpc_regs[subjectHits(gpc.ovl)]
+gpc_bp <- bs.list$gpc[queryHits(gpc.ovl),]
+# get meth and cov
+gpcmeth_persite <- getMeth(gpc_bp,type = "smooth",what = "perBase")
+gpccov_persite <- getCoverage(gpc_bp,type = "Cov",what = "perBase")
+# make tb
+gpcmeth.tb <- as_tibble(gpcmeth_persite)
+colnames(gpcmeth.tb)[1:2] <- pData(bs.list$gpc)$hap # add haplotype label
+gpcmeth.tb <- bind_cols(gpcmeth.tb,as_tibble(bp_gpcovl)) # add sv info
+# coverage filter
+keepi <- rowSums(gpccov_persite >= covthr) == 2 
+gpcmeth.tb <- gpcmeth.tb[keepi,]
+
+# merge
+meth.tb <- bind_rows(list(
+    cpg = cpgmeth.tb,
+    gpc = gpcmeth.tb), .id = "type")
+
+# gather
+meth.gather <- meth.tb %>%
+  gather(key = "hap",value = "mfreq", hap1, hap2) %>%
+  mutate(hap = ifelse(
+      (hap=="hap1" & svhap == 1) |
+        (hap=="hap2" & svhap == 2), "SV","REF"))
+
+```
+```{r meth_perregion, eval = T, include = FALSE, cache=F }
+# coverage thr
+covthr <- 5
+# cpg
+cpgmeth.bulk <- getMeth(bs.list$cpg,cpg_regs,"raw","perRegion")
+cpgcov.bulk <- getCoverage(bs.list$cpg,cpg_regs,"Cov","perRegionAverage")
+cpg.m <- getCoverage(bs.list$cpg,cpg_regs,"M","perRegionTotal")
+cpg.totcov <- getCoverage(bs.list$cpg,cpg_regs,"Cov","perRegionTotal")
+keepi <- rowSums(cpgcov.bulk >= covthr) == 2
+# make tb
+cpg.bulk <- as_tibble(cpgmeth.bulk) 
+# add hap
+colnames(cpg.bulk)[1:2] <- pData(bs.list$cpg)$hap
+# other stuff
+cpg.m <- as_tibble(cpg.m); names(cpg.m) <- paste0(names(cpg.bulk),"_M")
+cpg.totcov <- as_tibble(cpg.totcov); names(cpg.totcov) <- paste0(names(cpg.bulk),"_Cov")
+cpg.bulk <- cpg.bulk %>%
+  bind_cols(cpg.m,cpg.totcov,as_tibble(bp.bulk)) %>%
+  mutate(what = "cpg") %>%
+  na.omit()
+# gpc
+gpcmeth.bulk <- getMeth(bs.list$gpc,gpc_regs,"raw","perRegion")
+gpccov.bulk <- getCoverage(bs.list$gpc,gpc_regs,"Cov","perRegionAverage")
+gpc.m <- getCoverage(bs.list$gpc,gpc_regs,"M","perRegionTotal")
+gpc.totcov <- getCoverage(bs.list$gpc,gpc_regs,"Cov","perRegionTotal")
+keepi <- rowSums(gpccov.bulk >= covthr) == 2
+# make tb
+gpc.bulk <- as_tibble(gpcmeth.bulk) 
+# add hap
+colnames(gpc.bulk)[1:2] <- pData(bs.list$gpc)$hap
+# other stuff
+gpc.m <- as_tibble(gpc.m); names(gpc.m) <- paste0(names(gpc.bulk),"_M")
+gpc.totcov <- as_tibble(gpc.totcov); names(gpc.totcov) <- paste0(names(gpc.bulk),"_Cov")
+gpc.bulk <- gpc.bulk %>%
+  bind_cols(gpc.m,gpc.totcov,as_tibble(bp.bulk)) %>%
+  mutate(what = "gpc") %>%
+  na.omit()
+
+# assign ref vs sv meth
+cpg.bulk <- cpg.bulk %>%
+  mutate(sv = ifelse(svhap == 1, hap1, hap2),
+         ref = ifelse(svhap == 1, hap2, hap1))
+gpc.bulk <- gpc.bulk %>%
+  mutate(sv = ifelse(svhap == 1, hap1, hap2),
+         ref = ifelse(svhap == 1, hap2, hap1))
+
+# combine
+cpg.gather <- cpg.bulk %>%
+  gather(key = "hap",value = "mfreq", ref, sv)
+gpc.gather <- gpc.bulk %>%
+  gather(key = "hap",value = "mfreq", ref, sv)
+dat.bulk <- bind_rows(cpg.gather,gpc.gather)
+```
+
+```{r plot_density_ridges, eval = T, echo = F, fig.height=2.5, fig.width=6, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- pal_npg("nrc")(10)
+sv_pal <- c(pal[1],pal[4])
+dodge <- position_dodge(width = 0.7)
+plotpath <- file.path(plotdir,"200802_gm_hetsv_ridges.pdf")
+pdf(plotpath, width = 6, height = 3, useDingbats = F)
+# per site
+#ggplot(meth.gather,aes( x = mfreq, y = svtype, fill = hap)) +
+#  geom_density_ridges(alpha = 0.5, scale = 1.5) +
+#  facet_wrap(~type, scales = "free")
+# per region
+ggplot(dat.bulk,aes( x = mfreq, y = svtype, fill = hap)) +
+  geom_density_ridges(alpha = 0.5, scale = 1) +
+  scale_fill_manual(values = sv_pal,labels = c("Reference","Variant")) +
+  facet_wrap(~what) +
+  coord_cartesian(clip = "off") +
+  lims( x = c(0,1)) +
+  labs( x = "Methylation Frequency", y = "SV Type")
+ggplot(dat.bulk,aes(x = svtype, y = mfreq, color = hap)) +
+  facet_wrap(~what,scales = "free") +
+  geom_boxplot(position = dodge, width = 0.2, outlier.shape = NA) +
+  geom_violin(position = dodge, alpha = 0, width = 0.7) +
+  scale_color_manual(name = "SV",values = sv_pal) +
+  labs( x = "SV Type", y = "Methylation Frequency")
+dev.off()
+
+```
+
+```{r meth_compare, eval = T, include = FALSE, cache=F }
+# difference and chi-sq
+cpg.bulk <- cpg.bulk %>%
+  mutate(diff = sv - ref, 
+         hap1_UM = hap1_Cov - hap1_M,
+         hap2_UM = hap2_Cov - hap2_M) %>%
+  rowwise() %>%
+  mutate(pval = chisq.test(
+    x = matrix(data =   
+                 c(hap1_M,hap2_M, 
+                   hap1_UM,hap2_UM),ncol = 2))$p.value)
+gpc.bulk <- gpc.bulk %>%
+  mutate(diff = sv - ref, 
+         hap1_UM = hap1_Cov - hap1_M,
+         hap2_UM = hap2_Cov - hap2_M) %>%
+  rowwise() %>%
+  mutate(pval = chisq.test(
+    x = matrix(data =   
+                 c(hap1_M,hap2_M, 
+                   hap1_UM,hap2_UM),ncol = 2))$p.value)
+# FDR
+cpg.ins.pval_adjusted <- p.adjust(cpg.bulk$pval[cpg.bulk$svtype == "INS"],method = "BH")
+cpg.del.pval_adjusted <- p.adjust(cpg.bulk$pval[cpg.bulk$svtype == "DEL"],method = "BH")
+cpg.bulk$pval_adjusted = NA
+cpg.bulk$pval_adjusted[cpg.bulk$svtype == "INS"] <- cpg.ins.pval_adjusted
+cpg.bulk$pval_adjusted[cpg.bulk$svtype == "DEL"] <- cpg.del.pval_adjusted
+
+gpc.ins.pval_adjusted <- p.adjust(gpc.bulk$pval[gpc.bulk$svtype == "INS"],method = "BH")
+gpc.del.pval_adjusted <- p.adjust(gpc.bulk$pval[gpc.bulk$svtype == "DEL"],method = "BH")
+gpc.bulk$pval_adjusted = NA
+gpc.bulk$pval_adjusted[gpc.bulk$svtype == "INS"] <- gpc.ins.pval_adjusted
+gpc.bulk$pval_adjusted[gpc.bulk$svtype == "DEL"] <- gpc.del.pval_adjusted
+
+# significance
+pval_thr <- 0.05
+diff_thr <- 0.15
+cpg.bulk <- cpg.bulk %>%
+  mutate(direction = case_when(
+    pval_adjusted < pval_thr & diff < -diff_thr ~ "SV",
+    pval_adjusted < pval_thr & diff > diff_thr ~ "REF",
+    TRUE ~ "insig"
+  ))
+diff_thr <- 0.10
+gpc.bulk <- gpc.bulk %>%
+  mutate(direction = case_when(
+    pval_adjusted < pval_thr & diff < -diff_thr ~ "REF",
+    pval_adjusted < pval_thr & diff > diff_thr ~ "SV",
+    TRUE ~ "insig"
+  ))
+# quick numbers
+cpg.bulk %>%
+  group_by(direction, svtype) %>%
+  summarize( n = n()) %>%
+  arrange(svtype) %>%
+  filter( direction != "insig")
+gpc.bulk %>%
+  group_by(direction,svtype) %>%
+  summarize( n = n()) %>%
+  arrange(svtype) %>%
+  filter( direction != "insig")
+# combine
+meth.bulk <- bind_rows(list(
+  cpg = cpg.bulk,
+  gpc = gpc.bulk
+), .id = "type")
+
+# combine
+cpg.gather <- cpg.bulk %>%
+  gather(key = "hap",value = "mfreq", ref, sv)
+gpc.gather <- gpc.bulk %>%
+  gather(key = "hap",value = "mfreq", ref, sv)
+dat.bulk <- bind_rows(cpg.gather,gpc.gather)
+
+# QQ between ref and sv
+cpg.qq <- getQQ(one = cpg.bulk$ref, two = cpg.bulk$sv)
+gpc.qq <- getQQ(one = gpc.bulk$ref, two = gpc.bulk$sv)
+qq.tb <- bind_rows(list(
+  cpg = cpg.qq, gpc = gpc.qq
+), .id = "mod")
+```
+
+
+```{r plot_pairwise, eval = T, echo = F, fig.height=2.5, fig.width=6, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# pairwise ranked sum test?
+plt.tb <- meth.bulk %>%
+  filter(svtype %in% c("DEL","INS"))
+test.tb <- tibble()
+for (mod in c("cpg","gpc")){
+  for (svname in c("DEL","INS")){
+    x <- plt.tb %>%
+      filter(type == mod, svtype == svname)
+    test.tb <- test.tb %>%
+      bind_rows(tibble(mod = mod, svtype = svname, 
+          sv = mean(x$sv),
+          ref = mean(x$ref),
+          alt = ifelse(sv > ref, "greater","less"),
+          pval = wilcox.test(x$sv,x$ref,alternative = alt)$p.value,
+          nonpval = wilcox.test(x$sv,x$ref)$p.value))
+  }
+}
+test.tb
+
+plotpath <- file.path(plotdir,"200802_GM12878_het_SVs_bulk_methylation_pairwise.pdf")
+pdf(plotpath,height = 2.5, width = 5, useDingbats = F)
+# heatmap
+pal <- wes_palette("Rushmore1")
+ggplot(meth.bulk %>% filter(type == "cpg", svtype %in% c("DEL","INS")),aes(x = ref, y = sv)) +
+  geom_bin2d() +
+#  geom_density_2d(bins = 5, color = "black", linetype = "dashed") +
+  scale_fill_gradientn(name = "Count", trans = "log10",colors = pal) +
+  geom_abline(slope = 1, linetype = "dotted") +
+  coord_fixed() +
+  lims(x = c(0,1), y = c(0,1)) +
+  facet_wrap(~svtype) +
+  theme(panel.spacing = unit(1, "lines")) +
+  labs( title = "CpG Methylation", x = "Reference", y = "Variant")
+ggplot(meth.bulk %>% filter(type == "gpc", svtype %in% c("DEL","INS")),aes(x = ref, y = sv)) +
+  geom_bin2d() +
+#  geom_density_2d(bins = 5, color = "black", linetype = "dashed") +
+  scale_fill_gradientn(name = "Count", trans = "log10",colors = pal) +
+  geom_abline(slope = 1, linetype = "dotted") +
+  coord_fixed() +
+  lims(x = c(0,1), y = c(0,1)) +
+  facet_wrap(~svtype) +
+  theme(panel.spacing = unit(1, "lines")) +
+  labs( title = "GpC Accessibility", x = "Reference", y = "Variant")
+dev.off()
+```
+
+```{r plot_difference, eval = T, echo = F, fig.height=2.5, fig.width=6, message=F, warning = F,results = 'hide', fig.show = 'show'}
+numbers <- meth.bulk %>%
+  filter(direction != "insig") %>%
+  group_by(type,svtype,direction) %>%
+  summarize( n = n()) %>%
+  mutate(x = case_when(
+    type == "cpg" & direction == "REF" ~ 0.9,
+    type == "cpg" & direction == "SV" ~ -0.9,
+    type == "gpc" & direction == "REF" ~ -0.9,
+    type == "gpc" & direction == "SV" ~ 0.9
+  ),
+  hjust = ifelse(x == 0.9, 1,0),
+  n = paste(direction,"=",n)  )
+meth.del <- meth.bulk %>% filter(svtype == "DEL")
+meth.ins <- meth.bulk %>% filter(svtype == "INS")
+  
+pal <- pal_npg("nrc")(9)
+direction_pal <- c("gray50",pal[4],pal[1])
+plotpath <- file.path(plotdir,"200802_GM12878_het_SVs_bulk_methylation_difference.pdf")
+pdf(plotpath,height = 2.5, width = 5, useDingbats = F)
+ggplot(meth.bulk,aes( x = pval)) +
+  facet_wrap(~type + svtype) +
+  geom_histogram()
+
+ggplot(meth.del, aes( x = diff, color = direction,y = -log10(pval_adjusted))) +
+  geom_point(alpha = 1, size = 1)  +
+  facet_wrap(~type, labeller = as_labeller(c(cpg="CpG Methylation",gpc="GpC Accessibility"))) +
+  scale_color_manual(values = direction_pal) +
+  geom_text(data = numbers %>% filter(svtype == "DEL"), mapping = aes(x = x, label = n, hjust =hjust), y = 20, vjust = 1, color = "black", fontface = "bold") +
+  lims( y = c(0,20)) +
+  labs( x = "Reference - Variant Methylation", y = "-log10(P-Value)") +
+  theme(legend.position = "bottom")
+ggplot(meth.bulk %>% filter(svtype == "INS"), aes( x = diff, color = direction,y = -log10(pval_adjusted))) +
+  geom_point(alpha = 1, size = 1)  +
+  facet_wrap(~type, labeller = as_labeller(c(cpg="CpG Methylation",gpc="GpC Accessibility")), scales = "free") +
+  geom_text(data = numbers %>% filter(svtype == "INS"), mapping = aes(x = x, label = n, hjust =hjust), y = 15, vjust = 1, color = "black", fontface = "bold") +
+  lims( y = c(0,15)) +
+  scale_color_manual(values = direction_pal) +
+  labs( x = "Reference - Variant Methylation", y = "-log10(P-Value)") +
+  theme(legend.position = "bottom")
+dev.off()
+
+plotpath <- file.path(plotdir,"200407_GM12878_het_SVs_bulk_methylation_difference_density.pdf")
+pdf(plotpath,height = 1.5, width = 5, useDingbats = F)
+ggplot(meth.bulk %>% filter(svtype == "DEL"),aes(x = diff)) +
+  geom_density() +
+  facet_wrap(~type, labeller = as_labeller(c(cpg="CpG Methylation",gpc="GpC Accessibility"))) +
+  lims(x = c(-1,1))+
+  labs( x = "Reference - Variant Methylation", y = "Density")
+ggplot(meth.bulk %>% filter(svtype == "INS"),aes(x = diff)) +
+  geom_density() +
+  facet_wrap(~type, labeller = as_labeller(c(cpg="CpG Methylation",gpc="GpC Accessibility"))) +
+  lims(x = c(-1,1))+
+  labs( x = "Reference - Variant Methylation", y = "Density")
+dev.off()
+#ggplot(qq.tb,aes( x = one, y = two, color = mod)) +
+#  geom_point(shape = 1) +
+#  geom_abline( slope = 1, linetype = "dashed")
+```
+# context enrichment for SVs with difference
+```{r context, eval = T, include = FALSE, cache=F }
+regname <- "hetSV_bias"
+regs.fp <- paste0(subdir,"/GM12878_",regname,".bed")
+
+regsize <- 1e3
+# select svs that have opposite direction b/w cpg and gpc
+gpc.sig <- gpc.bulk %>%
+  filter( direction != "insig") %>%
+  mutate(lab = paste(chrom,start,end,svtype,sep="_"))
+cpg.sig <- cpg.bulk %>%
+  filter( direction != "insig") %>%
+  mutate(lab = paste(chrom,start,end,svtype,sep="_"))
+```
+
+# single-read 
+
+For single reads, I'm going to select the SVs that have difference in the biased direction
+
+```{r single_read_regions, eval = T, include = FALSE, cache=F }
+regname <- "hetSV_bias"
+regs.fp <- paste0(subdir,"/GM12878_",regname,".bed")
+
+regsize <- 1e3
+# select svs that have opposite direction b/w cpg and gpc
+gpc.sig <- gpc.bulk %>%
+  filter( direction != "insig") %>%
+  mutate(lab = paste(chrom,start,end,svtype,sep="_"))
+cpg.sig <- cpg.bulk %>%
+  filter( direction != "insig") %>%
+  mutate(lab = paste(chrom,start,end,svtype,sep="_"))
+cpg.sig <- cpg.sig %>%
+  mutate(gpcidx = match(lab,gpc.sig$lab),
+    gpcdirection = gpc.sig$direction[gpcidx])
+cpg.sig %>%
+  na.omit() %>%
+  group_by(direction,svtype,gpcdirection) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n))
+```
+
