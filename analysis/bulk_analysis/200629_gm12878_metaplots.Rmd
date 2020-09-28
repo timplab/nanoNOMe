@@ -1,0 +1,709 @@
+---
+title: "nanoNOMe metaplots"
+author: Isac Lee
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_notebook: default
+  pdf_document:
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: xelatex
+#bibliography: master.bib
+# set dir in the following function to the desired loc
+mainfont: "DejaVu Sans" # Try out some font options if xelatex
+titlefont: "DejaVu Sans" # Try out some font options if xelatex
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, 
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(biomaRt)
+library(ggsci)
+library(scales)
+```
+
+```{r functions, include = F}
+```
+
+```{r annotation, eval = T, include = FALSE, cache=F }
+# expression data in protein coding genes
+exp_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878/GM12878_genes_exp_quartiles.bed"
+cnames <- c("chr","start","end","txid","quartile","strand","ensid","hgnc_symbol","fpkm")
+genes <- read_tsv(exp_fp,col_names=cnames)
+
+
+################################################
+# H3K4me3
+################################################
+annodir <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878"
+h3k4me3_path <- file.path(annodir,"GM12878_H3K4me3_ChIP_peaks.bed.gz")
+h3k4me3.peaks <- GRanges(read_tsv(h3k4me3_path,col_names = c("chrom","start","end")) )
+# peak at tss?
+k4ovl <- overlapsAny(tss,h3k4me3.peaks)
+################################################
+# H3K27me3
+################################################
+h3k27me3_path <- file.path(annodir,"GM12878_H3K27me3_ChIP_peaks.bed.gz")
+h3k27me3.peaks <- GRanges(read_tsv(h3k27me3_path,col_names = c("chrom","start","end")) )
+k27ovl <- overlapsAny(tss,h3k27me3.peaks)
+# bivalent
+biovl <- k4ovl & k27ovl
+
+genes$histone = "None"
+genes$histone[k4ovl] <- "H3K4me3"
+genes$histone[k27ovl] <- "H3K27me3"
+genes$histone[biovl] <- "Bivalent"
+table(genes$histone)
+genes.gr <- GRanges(genes)
+tss <- promoters(genes.gr,upstream = 0  , downstream = 1)
+################################################
+# CTCF
+################################################
+ctcf.center <- GRanges(read_tsv("/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878/GM12878_CTCF.noTSS.center.bed",
+                         col_names = c("chrom","start","end")))
+
+```
+
+```{r read_data, eval = T, include = FALSE, cache=F }
+plotdir <- "/home/isac/Dropbox/Data/nome-seq/version3_guppy3/plots/metaplots"
+# nanoNOMe data
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome/pooled/mfreq"
+cpg_fp <- file.path(nanonomedir,"GM12878_nanoNOMe.cpg.BSseq.rds")
+gpc_fp <- file.path(nanonomedir,"GM12878_nanoNOMe.gpc.BSseq.rds")
+
+cpg <- readRDS(cpg_fp)
+gpc <- readRDS(gpc_fp)
+
+cpg.keepi <- getCoverage(cpg)[,1] > 3
+gpc.keepi <- getCoverage(gpc)[,1] > 3
+
+cpg.keep <- cpg[cpg.keepi,]
+gpc.keep <- gpc[gpc.keepi,]
+```
+
+```{r gold_standards, eval = T, include = FALSE, cache=F }
+# bsseq data
+wgbs_fp <- "/dilithium/Data/NGS/projects/gm12878/bsseq/bedMethyl/ENCFF835NTC.bismarkstyle.BSmooth.Rds"
+wgbs <- readRDS(wgbs_fp)
+
+wgbs.keepi <- getCoverage(wgbs)[,1] > 3
+wgbs.keep <- wgbs[wgbs.keepi,]
+
+## MNase-seq
+mnase_fp <- "/dilithium/Data/NGS/projects/gm12878/mnase/bed/GM12878_MNase_hg38.bedGraph.gz"
+mnase_cnames <- c("chrom","start","end","signal")
+mnase <- read_tsv(mnase_fp,col_names = mnase_cnames) 
+mnase.bin <- mnase %>%
+  mutate(start = round(start/20)*20) %>%
+  group_by(chrom,start) %>%
+  summarize(freq = mean(signal)) %>%
+  mutate(end = start)
+mnase.gr <- GRanges(mnase.bin)
+# DNAse data
+dnase_fp <- "/dilithium/Data/NGS/projects/gm12878/dnase/bed/GM12878_DNAse_signal.bedGraph"
+dnase <- read_tsv(dnase_fp,col_names = mnase_cnames) 
+dnase.gr <- GRanges(dnase)
+
+```
+
+plot metaplots
+
+################################################
+# Genes
+###############################################
+
+Overlapping code largely referenced Gigante's Nanopore methylation work : 
+https://github.com/scottgigante/haplotyped-methylome/blob/e7fd76d446d8e754b01d371adbff8e7d214c8124/notebooks/genome_level_methylation_summary.Rmd
+
+```{r by_exp, eval = T, include = FALSE, cache=F }
+flankn <- 10e3
+bodylen <- 2
+regions <- genes %>%
+  mutate( 
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+agg.list <- lapply(list(cpg = cpg.keep,gpc = gpc.keep,wgbs = wgbs.keep),function(x){
+  ovl <- findOverlaps(x,regions)
+  x.ovl <- x[queryHits(ovl),]
+  genes.ovl <- genes[subjectHits(ovl),] %>%
+    mutate(genewidth = end - start) %>%
+    dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+
+  meth.ovl <- as_tibble(granges(x.ovl)) %>%
+    mutate(freq = getMeth(x.ovl,type = "raw")[,1],
+      cov = getCoverage(x.ovl,type = "Cov")[,1])
+
+  dat.ovl <- meth.ovl %>%
+    bind_cols(genes.ovl) %>%
+    mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start),
+      dist = ifelse(dist < 0, dist/flankn,
+        ifelse(dist < genewidth,
+          bodylen * dist / genewidth,
+          bodylen + (dist - genewidth)/flankn)), 
+      dist = round(dist,3)
+      )
+  dat.ovl %>%
+    filter(cov >= 10) %>%
+    group_by(dist,quartile) %>% # add desired column name to this to stratify by other factors
+    summarize( freq = mean(freq),
+      n = n())
+    })
+
+# for mnase
+ovl <- findOverlaps(mnase.gr,regions)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+mnase.ovl <- mnase.bin[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+mnase.agg <- mnase.ovl %>%
+  group_by(dist,quartile) %>% # add desired column name to this to stratify by other factors
+  summarize( freq = mean(freq),
+    n = n())
+
+# normalize mnase signal?
+gpcmax <- max(agg.list$gpc$freq)
+gpcmin <- min(agg.list$gpc$freq)
+mnasemax <- max(-mnase.agg$freq)
+mnasemin <- min(-mnase.agg$freq)
+sigoff <- gpcmin - mnasemin
+sigtran <- gpcmax/(mnasemax + sigoff)
+
+-(seq(0,1,0.25)/ sigtran - sigoff)
+
+mnase.norm <- mnase.agg %>%
+  mutate(freq = (-freq + sigoff) * sigtran)
+
+acc.agg <- bind_rows(list(
+    nome = agg.list$gpc,
+    mnase = mnase.norm),.id = "what")
+
+meth.agg <- bind_rows(list(nome = agg.list$cpg,
+    wgbs = agg.list$wgbs),.id = "what") 
+
+
+agg.tb <- bind_rows(list(cpg = meth.agg, gpc = acc.agg),.id = "mod") %>%
+  mutate(exp = factor(quartile))
+
+pal <- pal_npg("nrc")(9)
+exp_pal <- c(pal[4],pal[3],pal[1],pal[8])
+plotpath <- file.path(plotdir,paste0("200713_gm12878_metaplot_",flankn,"bp.pdf"))
+pdf(plotpath,height = 4, width = 8)
+plt <- ggplot(agg.tb,aes( x = dist, y = freq,color = exp)) +
+  geom_smooth(method = "loess",span = 0.03, se = F) + lims( y = c(0,1)) +
+  facet_wrap(~what + mod,scales = "free") +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_color_manual(name = "Expression\nQuartile",values = exp_pal)  +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"TSS","TTS",paste0("+",flankn/1e3,"kb"))) +
+#  geom_line() + lims( y = c(0,1)) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency")
+print(plt)
+dev.off()
+```
+
+
+
+```{r by_histone, eval = T, include = FALSE, cache=F }
+flankn <- 10e3
+bodylen <- 2
+regions <- genes %>%
+  mutate( 
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+agg.list <- lapply(list(cpg = cpg.keep,gpc = gpc.keep,wgbs = wgbs.keep),function(x){
+  ovl <- findOverlaps(x,regions)
+  x.ovl <- x[queryHits(ovl),]
+  genes.ovl <- genes[subjectHits(ovl),] %>%
+    mutate(genewidth = end - start) %>%
+    dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+
+  meth.ovl <- as_tibble(granges(x.ovl)) %>%
+    mutate(freq = getMeth(x.ovl,type = "raw")[,1],
+      cov = getCoverage(x.ovl,type = "Cov")[,1])
+
+  dat.ovl <- meth.ovl %>%
+    bind_cols(genes.ovl) %>%
+    mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start),
+      dist = ifelse(dist < 0, dist/flankn,
+        ifelse(dist < genewidth,
+          bodylen * dist / genewidth,
+          bodylen + (dist - genewidth)/flankn)), 
+      dist = round(dist,3)
+      )
+  dat.ovl %>%
+    filter(cov >= 10) %>%
+    group_by(dist,histone) %>% # add desired column name to this to stratify by other factors
+    summarize( freq = mean(freq),
+      n = n())
+    })
+
+# for mnase
+ovl <- findOverlaps(mnase.gr,regions)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+mnase.ovl <- mnase.bin[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+mnase.agg <- mnase.ovl %>%
+  group_by(dist,histone) %>% # add desired column name to this to stratify by other factors
+  summarize( freq = mean(freq),
+    n = n())
+
+# normalize mnase signal?
+mnase.norm <- mnase.agg %>%
+  mutate(freq = (-freq + sigoff) * sigtran)
+
+acc.agg <- bind_rows(list(
+    nome = agg.list$gpc,
+    mnase = mnase.norm),.id = "what")
+
+meth.agg <- bind_rows(list(nome = agg.list$cpg,
+    wgbs = agg.list$wgbs),.id = "what") 
+
+
+agg.tb <- bind_rows(list(cpg = meth.agg, gpc = acc.agg),.id = "mod")
+
+pal <- pal_npg("nrc")(9)
+exp_pal <- c(pal[4],pal[3],pal[1],pal[8])
+plotpath <- file.path(plotdir,paste0("200713_gm12878_metaplot_histone_",flankn,"bp.pdf"))
+pdf(plotpath,height = 4, width = 8)
+plt <- ggplot(agg.tb,aes( x = dist, y = freq,color = histone)) +
+  geom_smooth(method = "loess",span = 0.03, se = F) + lims( y = c(0,1)) +
+  facet_wrap(~what + mod,scales = "free") +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+#  scale_color_manual(name = "Histone\nModification") +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"TSS","TTS",paste0("+",flankn/1e3,"kb"))) +
+#  geom_line() + lims( y = c(0,1)) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency")
+print(plt)
+dev.off()
+```
+
+
+
+# reduce resolution to 2kb around TSS
+
+# CTCF binding sites
+
+```{r ctcf, eval = T, include = FALSE, cache=F }
+# 2kb region
+ctcf.regs <- resize(ctcf.center,width = 2001, fix = "center")
+
+# data
+bs.list <- list(cpg = cpg.keep, gpc = gpc.keep, wgbs = wgbs.keep)
+bs.ctcf <- lapply(bs.list,function(x){x[overlapsAny(x,ctcf.regs),]})
+# mnase
+
+# get covs, calculate meth/unmeth, and get distance
+covs.ctcf <- lapply(bs.ctcf,function(x){
+  cov <- getCoverage(x,type = "Cov", what = "perBase")
+  m <- getCoverage(x,type = "M",what = "perBase")
+  center.near <- nearest(x,ctcf.center)
+  as_tibble(granges(x)) %>%
+    mutate( cov = cov[,1], meth = m[,1],
+            unmeth = cov - meth,
+            center = start(ctcf.center[center.near]),
+            dist = start - center)
+})
+## MNase data  - excluding in the report since it takes way too long
+#mnase.ctcf <- tabix(mnase_fp,ctcf.regs,mnase_cnames)
+#mnase.gr <- GRanges(mnase.ctcf)
+#center.near <- nearest(mnase.gr,ctcf.center)
+#mnase.ctcf <- mnase.ctcf %>%
+#  mutate( center = start(ctcf.center[center.near]),
+#          dist = start - center,
+#          freq = signal) %>%
+#  filter(abs(dist) <= 1000)
+#mnase.roll <- mnase.ctcf %>%
+#  group_by(dist) %>%
+#  summarize(freq = mean(freq)) %>%
+#  calculate_rollmean() %>%
+#  mutate(assay = "MNase")
+
+# aggregate
+agg.list <- lapply(covs.ctcf,aggregate_methylation)
+agg.tb <- bind_rows(agg.list,.id = "assay")
+cg.agg <- agg.tb %>%
+  filter( assay != "gpc") %>%
+  mutate( assay = ifelse(assay == "cpg","nanoNOMe","WGBS"))
+gc.agg <- agg.tb %>%
+  filter( assay == "gpc") 
+
+```
+
+
+```{r ctcf_metaplot, eval = T, echo = F, fig.height=2.5, fig.width=4, message=F, warning = F,results = 'hide', fig.show = 'show'}
+require(ggsci)
+require(scales)
+pal <- pal_npg("nrc")(9)
+#show_col(pal)
+g <- ggplot(cg.agg,aes( x = dist, y = freq, color = assay )) +
+  geom_line() + lims( y = c(0,1)) +
+  labs( x = "Distance from Binding Site", y = "Aggregated\nMethylation Frequency") +
+  scale_color_manual(name = "Method",values = c(pal[3],pal[5]) )
+g
+#plotpath <- file.path(plotdir,"GM12878_CTCF_cpg_metaplot.pdf")
+#pdf(plotpath,height = 2.5, width = 4, useDingbats = F)
+#print(g)
+#dev.off()
+
+#g <- ggplot(mnase.roll,aes(x = start, y = freq, color = assay )) +
+#  geom_line() + lims( y = c(3,0))+
+#  labs( x = "Distance from Binding Site", y = "Aggregated\nMethylation Frequency") +
+#  scale_color_manual(name = "Method",values = c(pal[3],pal[5]) )
+#g
+##plotpath <- file.path(plotdir,"GM12878_CTCF_mnase_metaplot.pdf")
+#pdf(plotpath,height = 2.5, width = 4, useDingbats = F)
+#print(g)
+#dev.off()
+
+g <- ggplot(gc.agg,aes( x = dist, y = freq, color = assay )) +
+  geom_line() + lims( y = c(0,1)) +
+  labs( x = "Distance from Binding Site", y = "Aggregated\nMethylation Frequency") +
+  scale_color_manual(name = "Method",values = c(pal[3],pal[5]) )
+g
+#plotpath <- file.path(plotdir,"GM12878_CTCF_gpc_metaplot.pdf")
+#pdf(plotpath,height = 2.5, width = 4, useDingbats = F)
+#print(g)
+#dev.off()
+```
+
+################################################
+# Genes
+###############################################
+
+```{r tss_expression, eval = T, include = FALSE, cache=F }
+# 10kb region
+side <- 2500
+tss.regs <- resize(tss,width = side * 2 + 1, fix = "center")
+
+## data
+agg.list <- lapply(list(cpg = cpg.keep,gpc = gpc.keep,wgbs = wgbs.keep),function(x){
+  ovl <- findOverlaps(x,tss.regs)
+  x.ovl <- x[queryHits(ovl),]
+  genes.ovl <- genes[subjectHits(ovl),] %>%
+    mutate(genewidth = end - start) %>%
+    dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+
+  meth.ovl <- as_tibble(granges(x.ovl)) %>%
+    mutate(freq = getMeth(x.ovl,type = "raw")[,1],
+      cov = getCoverage(x.ovl,type = "Cov")[,1])
+
+  dat.ovl <- meth.ovl %>%
+    bind_cols(genes.ovl) %>%
+    mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start))
+
+  dat.group <- dat.ovl %>%
+    filter(cov >= 10) %>%
+    group_by(quartile) # add desired column name to this to stratify by other factors
+
+  dat.agg <- bind_rows(lapply(dat.group %>% group_split(),aggregate_methylation),
+    .id = "typeidx")
+  dat.agg %>%
+    bind_cols(group_keys(dat.group)[dat.agg$typeidx,]) %>%
+    dplyr::select(-typeidx)
+})
+
+# MNase data  
+ovl <- findOverlaps(mnase.gr,tss.regs)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+mnase.ovl <- mnase.bin[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start))
+mnase.group <- mnase.ovl %>%
+  group_by(quartile) 
+mnase.list <- mnase.group %>%
+  group_split()
+mnase.agg <- bind_rows(lapply(mnase.list,aggregate_methylation),
+  .id = "typeidx") 
+mnase.agg <- mnase.agg %>%
+  bind_cols(group_keys(mnase.group)[mnase.agg$typeidx,]) %>%
+  dplyr::select(-typeidx)
+# normalize mnase signal?
+gpcmax <- max(agg.list$gpc$freq)
+gpcmin <- min(agg.list$gpc$freq)
+mnasemax <- max(-mnase.agg$freq)
+mnasemin <- min(-mnase.agg$freq)
+sigoff <- gpcmin - mnasemin
+sigtran <- gpcmax/(mnasemax + sigoff)
+mnase.norm <- mnase.agg %>%
+  mutate(freq = (-freq + sigoff) * sigtran)
+
+# DNAse data  
+ovl <- findOverlaps(dnase.gr,tss.regs)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+dnase.ovl <- dnase[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist_start = ifelse(gene_strand == "-",gene_end - end, start - gene_start),
+    dist_end = ifelse(gene_strand == "-",gene_end - start, end - gene_start),
+    dist_start = ifelse(abs(dist_start) > side, sign(dist_start) * side,dist_start),
+    dist_end = ifelse(abs(dist_end) > side, sign(dist_end) * side,dist_end)
+  )
+dnase.ovl[,c("dist_start","dist_end")]
+dnase.group <- dnase.ovl %>%
+  group_by(quartile) 
+dnase.list <- dnase.group %>%
+  group_split()
+x <- dnase.list[[1]]
+i <- 500
+distseq <- seq(-side,side)
+dnase.agg <- bind_rows(lapply(dnase.list,function(x){
+  distsignal <- sapply(distseq,function(i){
+    print(i)
+    disti <- which(i >= x$dist_start & i <= x$dist_end)
+    mean(x$signal[disti])})
+  tibble(dist = distseq, freq = distsignal) %>%
+    aggregate_methylation()
+  }),.id = "typeidx")
+dnase.agg <- dnase.agg %>%
+  bind_cols(group_keys(dnase.group)[dnase.agg$typeidx,]) %>%
+  dplyr::select(-typeidx)
+# normalize dnase signal?
+gpcmax <- max(agg.list$gpc$freq)
+gpcmin <- min(agg.list$gpc$freq)
+dnasemax <- max(dnase.agg$freq)
+dnasemin <- min(dnase.agg$freq)
+sigoff <- gpcmin - dnasemin
+sigtran <- gpcmax/(dnasemax + sigoff)
+dnase.norm <- dnase.agg %>%
+  mutate(freq = (freq + sigoff) * sigtran)
+
+# combine
+acc.agg <- bind_rows(list(
+    nanoNOMe = agg.list$gpc,
+    `Dnase Normalized` = dnase.norm),.id = "what")
+
+meth.agg <- bind_rows(list(nanoNOMe = agg.list$cpg,
+    WGBS = agg.list$wgbs),.id = "what") 
+
+agg.tb <- bind_rows(list(CpG = meth.agg, GpC = acc.agg),.id = "mod")
+
+# change exp to factor
+dnase.agg <- dnase.agg %>% mutate(exp = factor(quartile))
+mnase.agg <- mnase.agg %>% mutate(exp = factor(quartile))
+agg.tb <- agg.tb %>% mutate(exp = factor(quartile))
+
+# also let's do per gene combinatorial
+tss.400bp <- resize(tss,width = 401, fix = "start")
+meth.tss.list <- lapply(nome.tss,getMeth,regions = tss.400bp,type = "raw",what = "perRegion")
+meth.tb <- as_tibble(tss.400bp) %>%
+  mutate(cpg = meth.tss.list$cpg[,1],
+         gpc = meth.tss.list$gpc[,1],
+         exp = factor(quartile)) %>%
+  na.omit()
+```
+
+```{r expression_tss_metaplot, eval = T, echo = F, fig.height=3.5, fig.width=3.5, message=F, warning = F,results = 'hide', fig.show = 'show'}
+pal <- pal_npg("nrc")(9)
+exp_pal <- c(pal[4],pal[3],pal[1],pal[8])
+nome_pal <- c(pal[1],pal[4])
+#show_col(exp_pal)
+plotpath <- file.path(plotdir,"200630_tss_exp_metaplot.pdf")
+pdf(plotpath,height = 3.5, width = 3.5)
+ggplot(mnase.agg,aes( x = dist, y = freq, color = exp)) +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nMNase-seq Signal") +
+  scale_linetype_discrete(name = "Motif")  +
+  scale_color_manual(name = "Expression\nQuartile",values = exp_pal)  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+ggplot(dnase.agg,aes( x = dist, y = freq, color = exp)) +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nDNAse-seq Signal") +
+  scale_linetype_discrete(name = "Motif")  +
+  scale_color_manual(name = "Expression\nQuartile",values = exp_pal)  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+g.tss <- ggplot(agg.tb,aes( x = dist, y = freq, color = exp)) +
+  facet_wrap(~mod + what, scales = "free") +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nMethylation Frequency") +
+  scale_linetype_discrete(name = "Motif")  +
+  scale_color_manual(name = "Expression\nQuartile",values = exp_pal)  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+print(g.tss)
+dev.off()
+```
+```{r expression_tss_pairwise, eval = T, echo = F, fig.height=2.5, fig.width=3.5, message=F, warning = F,results = 'hide', fig.show = 'show'}
+ggplot(meth.tb,aes(x = gpc, y = cpg, color = exp)) +
+  geom_point(alpha = 0.2) +
+  scale_color_manual(name = "Expression\nQuartile",values = exp_pal) +
+  lims( x = c(0,1),y = c(0,1)) +
+  labs( x = "GpC Accessibility", y = "CpG Methylation") +
+  coord_fixed()
+  
+```
+
+# Histones
+
+```{r tss_histone, eval = T, include = FALSE, cache=F }
+# 10kb region
+side <- 2500
+tss.regs <- resize(tss,width = side * 2 + 1, fix = "center")
+
+## data
+agg.list <- lapply(list(cpg = cpg.keep,gpc = gpc.keep,wgbs = wgbs.keep),function(x){
+  ovl <- findOverlaps(x,tss.regs)
+  x.ovl <- x[queryHits(ovl),]
+  genes.ovl <- genes[subjectHits(ovl),] %>%
+    mutate(genewidth = end - start) %>%
+    dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+
+  meth.ovl <- as_tibble(granges(x.ovl)) %>%
+    mutate(freq = getMeth(x.ovl,type = "raw")[,1],
+      cov = getCoverage(x.ovl,type = "Cov")[,1])
+
+  dat.ovl <- meth.ovl %>%
+    bind_cols(genes.ovl) %>%
+    mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start))
+
+  dat.group <- dat.ovl %>%
+    filter(cov >= 10) %>%
+    group_by(histone) # add desired column name to this to stratify by other factors
+
+  dat.agg <- bind_rows(lapply(dat.group %>% group_split(),aggregate_methylation),
+    .id = "typeidx")
+  dat.agg %>%
+    bind_cols(group_keys(dat.group)[dat.agg$typeidx,]) %>%
+    dplyr::select(-typeidx)
+})
+
+# MNase data  
+ovl <- findOverlaps(mnase.gr,tss.regs)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+mnase.ovl <- mnase.bin[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start))
+mnase.group <- mnase.ovl %>%
+  group_by(histone) 
+mnase.list <- mnase.group %>%
+  group_split()
+mnase.agg <- bind_rows(lapply(mnase.list,aggregate_methylation),
+  .id = "typeidx") 
+mnase.agg <- mnase.agg %>%
+  bind_cols(group_keys(mnase.group)[mnase.agg$typeidx,]) %>%
+  dplyr::select(-typeidx)
+# normalize mnase signal?
+gpcmax <- max(agg.list$gpc$freq)
+gpcmin <- min(agg.list$gpc$freq)
+mnasemax <- max(-mnase.agg$freq)
+mnasemin <- min(-mnase.agg$freq)
+sigoff <- gpcmin - mnasemin
+sigtran <- gpcmax/(mnasemax + sigoff)
+mnase.norm <- mnase.agg %>%
+  mutate(freq = (-freq + sigoff) * sigtran)
+
+# DNAse data  
+ovl <- findOverlaps(dnase.gr,tss.regs)
+genes.ovl <- genes[subjectHits(ovl),] %>%
+  mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+dnase.ovl <- dnase[queryHits(ovl),] %>%
+  bind_cols(genes.ovl) %>%
+  mutate(dist_start = ifelse(gene_strand == "-",gene_end - end, start - gene_start),
+    dist_end = ifelse(gene_strand == "-",gene_end - start, end - gene_start),
+    dist_start = ifelse(abs(dist_start) > side, sign(dist_start) * side,dist_start),
+    dist_end = ifelse(abs(dist_end) > side, sign(dist_end) * side,dist_end)
+  )
+dnase.ovl[,c("dist_start","dist_end")]
+dnase.group <- dnase.ovl %>%
+  group_by(histone) 
+dnase.list <- dnase.group %>%
+  group_split()
+x <- dnase.list[[1]]
+i <- 500
+distseq <- seq(-side,side)
+dnase.agg <- bind_rows(lapply(dnase.list,function(x){
+  distsignal <- sapply(distseq,function(i){
+    print(i)
+    disti <- which(i >= x$dist_start & i <= x$dist_end)
+    mean(x$signal[disti])})
+  tibble(dist = distseq, freq = distsignal) %>%
+    aggregate_methylation()
+  }),.id = "typeidx")
+dnase.agg <- dnase.agg %>%
+  bind_cols(group_keys(dnase.group)[dnase.agg$typeidx,]) %>%
+  dplyr::select(-typeidx)
+# normalize dnase signal?
+gpcmax <- max(agg.list$gpc$freq)
+gpcmin <- min(agg.list$gpc$freq)
+dnasemax <- max(dnase.agg$freq)
+dnasemin <- min(dnase.agg$freq)
+sigoff <- gpcmin - dnasemin
+sigtran <- gpcmax/(dnasemax + sigoff)
+dnase.norm <- dnase.agg %>%
+  mutate(freq = (freq + sigoff) * sigtran)
+
+# combine
+acc.agg <- bind_rows(list(
+    nanoNOMe = agg.list$gpc,
+    `Dnase Normalized` = dnase.norm),.id = "what")
+
+meth.agg <- bind_rows(list(nanoNOMe = agg.list$cpg,
+    WGBS = agg.list$wgbs),.id = "what") 
+
+agg.tb <- bind_rows(list(CpG = meth.agg, GpC = acc.agg),.id = "mod")
+
+```
+
+```{r histone_tss_metaplot, eval = T, echo = F, fig.height=3.5, fig.width=3.5, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200630_tss_histone_metaplot.pdf")
+pdf(plotpath,height = 3.5, width = 3.5)
+ggplot(mnase.agg,aes( x = dist, y = freq, color = histone)) +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nMNase-seq Signal") +
+  scale_linetype_discrete(name = "Motif")  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+ggplot(dnase.agg,aes( x = dist, y = freq, color = histone)) +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nDNAse-seq Signal") +
+  scale_linetype_discrete(name = "Motif")  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+g.tss <- ggplot(agg.tb,aes( x = dist, y = freq, color = histone)) +
+  facet_wrap(~mod + what, scales = "free") +
+  geom_line(alpha = 0.7) + #lims( y = c(0,1)) +
+  labs( x = "Distance from TSS", y = "Aggregated\nMethylation Frequency") +
+  scale_linetype_discrete(name = "Motif")  +
+  theme(legend.position = "bottom", legend.box = "vertical")
+print(g.tss)
+dev.off()
+```
+

@@ -1,0 +1,1134 @@
+---
+title: "nanoNOMe single-read test"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(mclust)
+library(UpSetR) 
+library(grid)
+
+
+```
+
+```{r functions, include = F}
+```
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome/pooled"
+subdir <- file.path(nanonomedir,"../regs")
+outdir <- file.path(nanonomedir,"mfreq")
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/bcan"
+lab <- "breast_lines_nanoNOMe"
+cpg_bs_fp <- paste0(nanonomedir,"/mfreq/",lab,".cpg.BSmooth.rds")
+gpc_bs_fp <- paste0(nanonomedir,"/mfreq/",lab,".gpc.BSmooth.rds")
+sv_fp <- "/uru/Data/Nanopore/projects/nanonome/bcan/bcan_hom_insdel_bp.txt"   
+```
+```{r read_data, eval = T, include = FALSE, cache=T }
+cpg <- readRDS(cpg_bs_fp)
+gpc <- readRDS(gpc_bs_fp)
+sv <- read_tsv(sv_fp)
+
+```
+
+```{r preprocess, eval = T, include = FALSE, cache=T }
+## filter by coverage ----
+cpg.cov <- getCoverage(cpg,type="Cov",what="perBase")
+keepi <- rowSums(cpg.cov > 3) == ncol(cpg.cov)
+cpg.keep <- cpg[keepi,]
+gpc.cov <- getCoverage(gpc,type="Cov",what="perBase")
+keepi <- rowSums(gpc.cov > 3) == ncol(gpc.cov)
+gpc.keep <- gpc[keepi,]
+
+# comparisons
+# first make sure sample orders are the same :
+pData(cpg)$sample == pData(gpc)$sample
+samps <- pData(cpg)$sample
+comparisons <- tibble(two = c("MCF10A","MCF10A","MCF7"), one = c("MCF7","MDAMB231","MDAMB231")) %>%
+  mutate(onei = match(one,samps), twoi = match(two,samps))
+```
+
+```{r differential, eval = T, include = FALSE, cache=T }
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+# first cpg
+dmr.list <- list()
+for (i in seq(nrow(comparisons))){ 
+  print(i)
+  comp <- comparisons[i,]
+  onei <- comp$onei
+  twoi <- comp$twoi
+  dmrs <- findDMRs(cpg.keep,onei,twoi,qcutoff = 0.99)
+  cpgmeth <- getMeth(cpg.keep[,c(onei,twoi)])
+  cpgdiff <- cpgmeth[,1]-cpgmeth[,2]
+  cpgthr <- quantile(abs(cpgdiff),0.90,na.rm = T)
+  dmrs <- dmrs %>%
+    mutate(sig = ifelse(abs(meandiff) > cpgthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+  table(dmrs$sig)
+  dmr.list[[i]] <- dmrs
+}
+# cmopare gpc meth at each of the dmrs
+for (i in seq(nrow(comparisons))){ 
+  print(i)
+  comp <- comparisons[i,]
+  onei <- comp$onei
+  twoi <- comp$twoi
+  dmrs <- dmr.list[[i]]
+  dmr_labs <- paste(dmrs$chr,dmrs$start,dmrs$end,sep="_")
+  gpc.dmrs <- compareRegions(gpc.keep,onei,twoi,dmrs)
+  gpcdmr_labs <- paste(gpc.dmrs$chr,gpc.dmrs$start,gpc.dmrs$end,sep="_")
+  dmrs$gpcdiff <- gpc.dmrs$meandiff[match(dmr_labs,gpcdmr_labs)]
+  dmr.list[[i]] <- dmrs
+}
+dmrs <- dmr.list[[1]]
+
+# then gpc - let's get peaks for each sample first
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+peaks.list <- list()
+for (i in seq(ncol(gpc))){
+  print(i)
+  peaks <- gpcPeakCaller(gpc.keep[,i])
+  summary(peaks %>% filter(sig == "sig") %>% .$peak)
+  cpg.keep[,i]
+  peaks %>% filter(sig == "sig") %>%
+    summarize(min(peak))
+  peaks.list[[i]] <- peaks
+}
+peaks <- peaks.list[[1]]
+
+# for each comparison, find non-overlaps to and get differentially accessibile regions
+dar.list <- list()
+for (i in seq(nrow(comparisons))){ 
+  comp <- comparisons[i,]
+  onei <- comp$onei
+  twoi <- comp$twoi
+  peaks.one <- peaks.list[[onei]] %>% filter(sig == "sig")
+  peaks.two <- peaks.list[[twoi]] %>% filter(sig == "sig")
+  one.gr <- GRanges(peaks.one)
+  two.gr <- GRanges(peaks.two)
+  ovl <- findOverlaps(one.gr,two.gr)
+  one.unique <- peaks.one[-queryHits(ovl),]
+  two.unique <- peaks.two[-subjectHits(ovl),]
+  # add those two regions for comparison
+  regions <- bind_rows(list( one = one.unique ,
+    two = two.unique ),.id = "direction") %>%
+    arrange(chr,start,end)
+  dars <- compareRegions(gpc.keep,onei,twoi, regions = regions)
+  gpcmeth <- getMeth(gpc.keep[,c(onei,twoi)])
+  gpcdiff <- gpcmeth[,1]-gpcmeth[,2]
+  gpcthr <- quantile(abs(gpcdiff),0.99,na.rm = T)
+  dars <- dars %>%
+    mutate(
+      n = idxEnd - idxStart + 1,
+      sig = ifelse(abs(meandiff) > gpcthr & end -start + 1 >= 100 & n >= 5 & adjusted.pval < 0.01, "sig","insig"))
+  dar.list[[i]] <- dars
+}
+
+# let's save these for future use
+if (F) {
+  dmrpath <- paste0(outdir,"/200802",lab,".dmrs.rds")
+  peakspath <- paste0(outdir,"/200802",lab,".peaks.rds")
+  darpath <- paste0(outdir,"/200802",lab,".dars.rds")
+  saveRDS(dmr.list,dmrpath)
+  saveRDS(peaks.list,peakspath)
+  saveRDS(dar.list,darpath)
+}
+```
+
+```{r sig, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+if (! exists("dmr.list")) {
+  dmrpath <- paste0(outdir,"/200802",lab,".dmrs.rds")
+  peakspath <- paste0(outdir,"/200802",lab,".peaks.rds")
+  darpath <- paste0(outdir,"/200802",lab,".dars.rds")
+  dmr.list <- readRDS(dmrpath)
+  peaks.list <- readRDS(peakspath)
+  dar.list <- readRDS(darpath)
+}
+
+# just significant stuff
+dmrsig.list <- lapply(dmr.list,function(x) x %>% filter(sig=="sig"))
+darsig.list <- lapply(dar.list,function(x) x %>% filter(sig=="sig"))
+# combine all, just taking significant ones
+peaks.all <- bind_rows(peaks.list,.id = "sampidx") %>%
+  mutate(sampidx = as.numeric(sampidx),
+    samp = pData(gpc.keep)$sample[sampidx]) %>%
+  filter(sig == "sig")
+dmrs.all <- bind_rows(dmr.list,.id = "compidx") %>%
+  mutate(
+    compidx = as.numeric(compidx),
+    one = comparisons$one[compidx], 
+    two = comparisons$two[compidx]) %>%
+  filter(sig == "sig")
+dars.all <- bind_rows(dar.list,.id = "compidx") %>%
+  mutate(
+    compidx = as.numeric(compidx),
+    one = comparisons$one[compidx], 
+    two = comparisons$two[compidx]) %>%
+  filter(sig == "sig")
+dmrs.totn <- dmrs.all %>%
+  group_by(two,direction) %>%
+  summarize( n = n())
+dars.totn <- dars.all %>%
+  group_by(two,direction) %>%
+  summarize( n = n())
+# granges
+dars.gr <- GRanges(dars.all)
+dmrs.gr <- GRanges(dmrs.all)
+dmrs.all %>%
+  group_by(two, direction) %>%
+  summarize( n =n())
+dars.all %>%
+  group_by(two, direction) %>%
+  summarize( n =n())
+# output into tsvs
+
+dmrs.out <- dmrs.all %>%
+    mutate(Higher = ifelse(direction == "up",one,two),
+      Comparison = paste(one,"-",two)
+      ) %>%
+    dplyr::select(
+      Chromosome = chr,
+      Start = start,
+      End = end,
+      idxStart, idxEnd, Num_Sites = n,
+      One = one,
+      Two = two,
+      Comparison,
+      One_Observations = cov_one,
+      Two_Observations = cov_two,
+      One_Methylated = meth_one,
+      Two_Methylated = meth_two,
+      One_Average = average_one,
+      Two_Average = average_two,
+      Hypermethylated = Higher,
+      Mean_Difference = meandiff,
+      Max_Difference = maxdiff,
+      p.value, adjusted.pval, 
+      Width = width) %>%
+  arrange(desc(abs(Mean_Difference)))
+dars.out <- dars.all %>%
+    mutate(Higher = ifelse(direction == "up",one,two),
+      Comparison = paste(one,"-",two)
+      ) %>%
+    dplyr::select(
+      Chromosome = chr,
+      Start = start,
+      End = end,
+      idxStart, idxEnd, Num_Sites = n,
+      One = one,
+      Two = two,
+      Comparison,
+      One_Observations = cov_one,
+      Two_Observations = cov_two,
+      One_Methylated = meth_one,
+      Two_Methylated = meth_two,
+      One_Average = average_one,
+      Two_Average = average_two,
+      Higher,
+      Mean_Difference = meandiff,
+      Max_Difference = maxdiff,
+      p.value, adjusted.pval, 
+      Width = width) %>%
+  arrange(desc(abs(Mean_Difference)))
+dmrpath <- file.path(plotdir,"200802_bcan_DMRs.tsv")
+write_tsv(dmrs.out,dmrpath)
+darpath <- file.path(plotdir,"200802_bcan_DARs.tsv")
+write_tsv(dars.out,darpath)
+
+```
+
+```{r similarity, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# how similar are DMRs and DARs b/w 7 and 231?
+dmr7 <- dmrsig.list[[1]] %>% GRanges()
+dmr231 <- dmrsig.list[[2]] %>% GRanges()
+dar7 <- darsig.list[[1]] %>% GRanges()
+dar231 <- darsig.list[[2]] %>% GRanges()
+
+findOverlaps(dmr7,dmr231)
+findOverlaps(dar7,dar231)
+
+```
+```{r global_comparison, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# overlapping dars with dmrs
+ovl.list <- list()
+unique.list <- list()
+upset.list <- list()
+for ( i in seq(nrow(comparisons))){
+  dmrs <- dmrsig.list[[i]]
+  dars <- darsig.list[[i]]
+  dmrsub.gr <- GRanges(dmrs)
+  darsub.gr <- GRanges(dars)
+  ovl <- findOverlaps(dmrsub.gr,darsub.gr)
+  dmrs.unique <- dmrs[-queryHits(ovl),] %>%
+    dplyr::select(chr,start,end,meandiff,direction,width,adjusted.pval)
+  dars.unique <- dars[-subjectHits(ovl),] %>%
+    dplyr::select(chr,start,end,meandiff,direction,width,adjusted.pval)
+  dat.unique <- bind_rows(list( cpg = dmrs.unique, gpc = dars.unique),.id = "mod")
+  dat.ovl <- dmrs[queryHits(ovl),] %>%
+    dplyr::select(chr,start,end,cpgdiff = meandiff,cpgdirection = direction,cpgpval=  adjusted.pval) %>%
+    bind_cols(dars[subjectHits(ovl),] %>%
+      dplyr::select(gpcdiff = meandiff,gpcdirection = direction,gpcpval=  adjusted.pval) )
+  upset.df <- dat.unique %>%
+    transmute( 
+      Hypermethylated = ifelse(mod == "cpg" & direction == "up",1,0),
+      Hypomethylated = ifelse(mod == "cpg" & direction == "down",1,0),
+      "More Accessible" = ifelse(mod == "gpc" & direction == "up",1,0),
+      "Less Accessible" = ifelse(mod == "gpc" & direction == "down",1,0)) %>%
+    bind_rows(dat.ovl %>%
+      transmute(
+        Hypermethylated = ifelse(cpgdirection == "up",1,0),
+        Hypomethylated = ifelse(cpgdirection == "down",1,0),
+        "More Accessible" = ifelse(gpcdirection == "up",1,0),
+        "Less Accessible"= ifelse(gpcdirection == "down",1,0))) %>%
+    as.data.frame()
+  upset.list[[i]] <- upset.df
+  unique.list[[i]] <- dat.unique
+  ovl.list[[i]] <- dat.ovl
+}
+ovl.tb <- bind_rows(ovl.list,.id = "compidx") %>%
+  mutate(compidx = as.numeric(compidx),
+    one = comparisons$one[compidx],
+    two = comparisons$two[compidx]
+  )
+ovl.cor <- tibble(cor = round(sapply(ovl.list,function(x) cor(x$cpgdiff,x$gpcdiff)),2)) %>%
+  bind_cols(comparisons) %>%
+  mutate(lab = paste("r =",cor))
+ovl.tb %>%
+  group_by(cpgdirection,gpcdirection,two,one) %>%
+  summarize(n = n())
+# fractoins
+nrow(dmrs.all)
+nrow(dars.all)
+ovlnum <- nrow(ovl.tb %>% filter(cpgdirection != gpcdirection))
+ovlnum/nrow(dmrs.all)
+ovlnum/nrow(dars.all)
+```
+```{r}
+# count histogram
+# separately, count
+binw <- 0.05
+dmrs.plt <- dmrs.all %>%
+  dplyr::select(one,two,meandiff,direction) %>%
+  mutate(bin = round(meandiff/binw)*binw) %>%
+  group_by(one,two,bin,direction) %>%
+  summarize( n = n())
+dmrs.num <- dmrs.all %>%
+  group_by(one,two,direction) %>%
+  summarize( n =n ()) %>%
+  rowwise() %>%
+  mutate(x = ifelse(direction == "down",-0.75,0.75),
+    y = max(dmrs.plt$n[dmrs.plt$two == two & dmrs.plt$one == one]))  %>%
+  ungroup()
+dars.plt <- dars.all %>%
+  dplyr::select(one,two,meandiff,direction) %>%
+  mutate(bin = round(meandiff/binw)*binw) %>%
+  group_by(one,two,bin,direction) %>%
+  summarize( n = n())
+dars.num <- dars.all %>%
+  group_by(one,two,direction) %>%
+  summarize( n =n ()) %>%
+  rowwise() %>%
+  mutate(x = ifelse(direction == "down",-0.75,0.75),
+    y = max(dars.plt$n[dars.plt$two == two & dars.plt$one == one]))  %>%
+  ungroup()
+# concordant
+comb.tb <- ovl.tb
+comb.nums <- comb.tb %>%
+  group_by(one,two,cpgdirection,gpcdirection) %>%
+  summarize( n =n()) %>%
+  mutate(x = ifelse(gpcdirection == "up",1,-1),
+    y = ifelse(cpgdirection == "up",1,-1),
+    hjust = ifelse(x == 1,1,0),
+    vjust = ifelse(y == 1, 0.5,0)
+  )
+conc.tb <- comb.tb %>%
+  filter(cpgdirection != gpcdirection) %>%
+  mutate(direction = gpcdirection)
+conc.gr <- GRanges(conc.tb)
+conc.num <- conc.tb %>%
+  group_by(one,two,direction) %>%
+  summarize( n = n())
+# all three
+nums.all <- bind_rows(list(
+    dmr = dmrs.num,
+    dar = dars.num,
+    conc = conc.num),.id = "what") %>%
+  dplyr::select(-x,-y) %>%
+  group_by(what,one,two) %>%
+  mutate(frac = n/sum(n)) %>%
+  ungroup()
+nums.all$what <- factor(nums.all$what,levels = c("dmr","dar","conc"))
+levels(nums.all$what) <- c("Methylation","Accessibility","Concordant")
+nums.all <- nums.all %>%
+  mutate(y = ifelse(direction == "up",0,1))
+nums.all %>%
+  group_by(what,one,two) %>%
+  summarize( n = sum(n)) %>%
+  spread(what,n) %>%
+  gather(what,n,-one,-two,-Concordant) %>%
+  mutate(frac = Concordant/n)
+
+
+```
+
+```{r global_comparison_plot, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+dmrs.plt <- dmrs.plt %>%
+  mutate(comp = paste(one,"vs",two))
+dmrs.num <- dmrs.num %>%
+  mutate(comp = paste(one,"vs",two))
+dars.plt <- dars.plt %>%
+  mutate(comp = paste(one,"vs",two))
+dars.num <- dars.num %>%
+  mutate(comp = paste(one,"vs",two))
+ovl.tb <- ovl.tb %>%
+  mutate(comp = paste(one,"vs",two))
+ovl.cor <- ovl.cor %>%
+  mutate(comp = paste(one,"vs",two))
+comb.nums <- comb.nums %>%
+  mutate(comp = paste(one,"vs",two),
+    y = ifelse( y == -1, -0.4, 0.4)
+  )
+plotpath <- file.path(plotdir,"200804_bcan_differential_global_comparison.pdf")
+pdf(plotpath,width= 7, height = 2, useDingbats = F)
+ggplot(dmrs.plt,aes(x = bin,y = n,fill = direction )) +
+  facet_wrap(~comp,scales = "free") +
+  geom_histogram(stat = "identity") +
+  geom_text(data = dmrs.num, mapping = aes(x = x, y = y, label = n),vjust = 2,size = 4)+
+  labs(x = "One - Two", y = "Number of DMRs") +
+  lims(x = c(-1,1))+
+  coord_cartesian(clip="off")
+ggplot(dars.plt,aes(x = bin,y = n,fill = direction )) +
+  facet_wrap(~comp,scales = "free") +
+  geom_histogram(stat = "identity") +
+  geom_text(data = dars.num, mapping = aes(x = x, y = y, label = n),vjust = 1,size = 4)+
+  labs(x = "One - Two", y = "Number of DARs") +
+  lims(x = c(-1,1))+
+  coord_cartesian(clip="off")
+ggplot(ovl.tb,aes( x = gpcdiff, y = cpgdiff)) +
+  facet_wrap(~comp) +
+  geom_bin2d() +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_text(inherit.aes = F, data = ovl.cor, mapping = aes( label = lab), x = 0, y = 0, hjust = 0.5, vjust = 0,size = 4) +
+  geom_text(inherit.aes = F, data = comb.nums, mapping = aes( x = x, y = y,label = n,hjust = hjust, vjust = vjust),size = 4) +
+  scale_fill_gradient(trans = "log10") +
+  coord_fixed(xlim = c(-1,1), ylim = c(-1,1)) +
+  labs( x = "GpC Difference", y = "CpG Difference")
+dev.off()
+nums.all <- nums.all %>%
+  mutate(comp = paste(one,"vs",two),
+    y = ifelse(y == 0, 0, 0.9)
+  )
+plotpath <- file.path(plotdir,"200804_bcan_differential_global_comparison_all_summary.pdf")
+pdf(plotpath,width= 7, height = 2.5, useDingbats = F)
+ggplot(nums.all,aes( x = what, y = frac, fill = direction)) +
+  facet_wrap(~comp) +
+  geom_histogram(stat = "identity") +
+  geom_text(inherit.aes = F, data = nums.all, mapping = aes( x = what, y = y,label = n),vjust = 0,size = 4) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+dev.off()
+plotpath <- file.path(plotdir,"200804_bcan_differential_global_upset.pdf")
+pdf(plotpath,width= 4, height = 2.5, useDingbats = F)
+upset(upset.list[[1]],
+  matrix.color = "black", set_size.angles = 30, main.bar.color = "black", mb.ratio = c(0.6,0.4))
+grid.text(paste(comparisons$one[1],"vs",comparisons$two[1]),x = 0.3, y=0.95, gp=gpar(fontsize=10))
+upset(upset.list[[2]],
+  matrix.color = "black", set_size.angles = 30, main.bar.color = "black", mb.ratio = c(0.6,0.4))
+grid.text(paste(comparisons$one[2],"vs",comparisons$two[2]),x = 0.3, y=0.95, gp=gpar(fontsize=10))
+upset(upset.list[[3]],
+  matrix.color = "black", set_size.angles = 30, main.bar.color = "black", mb.ratio = c(0.6,0.4))
+grid.text(paste(comparisons$one[3],"vs",comparisons$two[3]),x = 0.3, y=0.95, gp=gpar(fontsize=10))
+dev.off()
+```
+
+```{r annotation, eval = T, include = FALSE, cache=T }
+# genes
+genes_fp <- "/uru/Data/Nanopore/projects/nanonome/bcan/bcan_diffexp_sig_genes.txt"
+genes <- read_tsv(genes_fp)
+genes.gr <- GRanges(genes)
+tss <- genes %>%
+  mutate(start = ifelse(strand == "-",end,start),
+    end = start
+  )
+
+# regulatory elements
+regulatory_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_regulatory_features.bed"
+regulatory <- read_tsv(regulatory_fp,col_names = c("chrom","start","end","type"))
+
+# CTCF motifs
+ctcf_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/CTCF_bindingsites_hg38.bed"
+ctcf <- read_tsv(ctcf_fp,col_names = c("chrom","start","end"))
+# replace ctcf binding sites in regulatory data with better ctcf binding sites
+regulatory <- regulatory %>%
+  filter(type != "CTCF_binding_site") %>%
+  bind_rows(ctcf %>% mutate(type = "CTCF_binding_site"))
+
+# let's also only look at ctcf, enhancer, and TF binding sites
+regulatory <- regulatory %>%
+  filter(type %in% c("CTCF_binding_site","enhancer","TF_binding_site"))
+regulatory  %>%
+  mutate( width = end - start + 1 ) %>%
+  group_by(type) %>%
+  summarize( n = n(),
+    mean = mean(width),
+    median = median(width))
+regulatory.gr <- GRanges(regulatory)
+
+# let's look at Cgi
+cgi_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_cgi.bed"
+cgi <- read_tsv(cgi_fp,col_names = c("chrom","start","end"))
+cgi.gr <- GRanges(cgi)
+
+# repeats
+# first all repetitive elements?
+rep_fh <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_repeats.bed"
+rep_cnames <- c("repchrom","repstart","repend","repname","repscore", "repstrand","reptype")
+reps <- read_tsv(rep_fh,col_names = rep_cnames)
+# which rep types to look at?
+reptypes <- c("LINE","SINE","LTR")
+reps <- reps %>%
+  filter(reptype %in% reptypes)
+# rename alu reptype?
+reps <- reps %>%
+  mutate(reptype = case_when(
+    grepl("lu",repname) ~ "Alu",
+    grepl("MIR",repname) ~ "MIR",
+    TRUE ~ reptype)) %>%
+  filter(reptype != "SINE")
+reps %>%
+  group_by(reptype) %>%
+  summarize(n())
+
+# add label
+reps <- reps %>%
+  mutate(label = paste(repchrom,repstart,repend,sep ="_"))
+reps.gr <- reps %>%
+  mutate(chrom = repchrom, start = repstart, end = repend) %>%
+  GRanges()
+table(reps$reptype)
+
+## process SVs
+
+sv <- sv %>%
+  mutate(idx = seq(n()))
+sv.gr <- GRanges(sv)
+sv.5p <- resize(sv.gr,width= 1, fix = "start")
+sv.3p <- resize(sv.gr,width= 1, fix = "end")
+win <- 1e3
+sv.5preg <-resize(sv.5p,width = win, fix = "end")
+sv.3preg <-resize(sv.3p,width = win, fix = "start")
+sv.regs <- c(sv.5preg,sv.3preg)
+
+svlabs <- paste( 
+  "SV",
+  ifelse(sv.regs$MCF10A==1,"MCF10A",""),
+  ifelse(sv.regs$MCF7==1,"MCF7",""),
+  ifelse(sv.regs$MDAMB231==1,"MDAMB231","")
+) %>%
+  trimws() %>%
+  gsub("   ","_",.) %>%
+  gsub("  ","_",.) %>%
+  gsub(" ","_",.)
+
+sv.regs$lab  <- svlabs
+
+```
+
+# enrichment
+```{r enrichment_prep, eval = T, include = FALSE, cache=F }
+# genome size
+# to get enrichment, I need to ge tthe total size first
+chrs <- as.character(seqnames(cpg.keep))
+positions <- start(cpg.keep)
+cpg.cid <- bsseq:::clusterMaker(chrs,positions)
+cpg.clusters <- tibble(idx = seq_along(cpg.cid),cid = cpg.cid) %>%
+  group_by(cid) %>%
+  summarize(idxStart = min(idx), idxEnd = max(idx)) %>%
+  mutate(chr = chrs[idxStart], start = positions[idxStart], end = positions[idxEnd])
+cpgclusters.gr <- GRanges(cpg.clusters)
+cpg.totwidth <- sum(cpg.clusters$end - cpg.clusters$start + 1)
+# gpc
+chrs <- as.character(seqnames(gpc.keep))
+positions <- start(gpc.keep)
+gpc.cid <- bsseq:::clusterMaker(chrs,positions)
+gpc.clusters <- tibble(idx = seq_along(gpc.cid),cid = gpc.cid) %>%
+  group_by(cid) %>%
+  summarize(idxStart = min(idx), idxEnd = max(idx)) %>%
+  mutate(chr = chrs[idxStart], start = positions[idxStart], end = positions[idxEnd])
+gpcclusters.gr <- GRanges(gpc.clusters)
+gpc.totwidth <- sum(gpc.clusters$end - gpc.clusters$start + 1)
+#
+conclusters.gr <- intersect(cpgclusters.gr,gpcclusters.gr)
+conc.totwidth <- sum(width(conclusters.gr))
+
+# expected ppm - perbase
+dmrs.totlen <- dmrs.all %>%
+  mutate(width = end - start + 1) %>%
+  group_by(one,two,direction) %>%
+  summarize( totlen = sum(width)) %>%
+  mutate(ppm = totlen/cpg.totwidth*1e6,
+    lab = paste(one,two,direction,sep="_"))
+
+dars.totlen <- dars.all %>%
+  mutate(width = end - start + 1) %>%
+  group_by(one,two,direction) %>%
+  summarize( totlen = sum(width)) %>%
+  mutate(ppm = totlen/cpg.totwidth*1e6,
+    lab = paste(one,two,direction,sep="_"))
+# expected num per 1Mb
+dmrs.permb <- dmrs.all %>%
+  group_by(one,two) %>%
+  summarize( n = n()) %>%
+  mutate(permb = n/cpg.totwidth*1e6)
+dars.permb <- dars.all %>%
+  group_by(one,two) %>%
+  summarize( n = n()) %>%
+  mutate(permb = n/gpc.totwidth*1e6)
+conc.permb <- conc.tb %>%
+  group_by(one,two) %>%
+  summarize( n = n()) %>%
+  mutate(permb = n/conc.totwidth*1e6)
+ 
+# total region size in the data
+tssreg <- tss %>%
+  mutate(start = start - 500,
+    end = start + 1e3)
+regs <- bind_rows(
+  reps %>% dplyr::select(chrom = repchrom, start = repstart, end = repend, regtype = reptype),
+#  cgi %>% mutate(regtype = "CGI"),
+  regulatory %>% dplyr::rename(regtype = type),
+  tssreg %>% dplyr::select(chrom , start , end)%>% mutate( regtype = "TSS"),
+  genes %>% dplyr::select(chrom,start,end) %>% mutate( regtype = "Gene Body"),
+  as_tibble(sv.regs) %>% dplyr::select(chrom = seqnames,start,end,regtype = lab)
+)
+# get unions of themselves to get unique intervals
+regs  <- regs %>%
+  group_by(regtype)
+regs.keys <- regs %>% group_keys() %>% .$regtype
+regs.list <- regs %>% group_split()
+names(regs.list) <- regs.keys
+unionregs <- bind_rows(lapply(regs.list,function(x){
+  gr <- GRanges(x)
+  x.union <- union(gr,gr)
+  as_tibble(x.union) %>% dplyr::select(chrom = seqnames,start,end)
+}),.id = "regtype")
+unionregs.gr <- GRanges(unionregs)
+
+# overlap with cpg and gpc to get total size in data
+# cpg
+cpgregs.ovl <- findOverlaps(unionregs.gr,cpgclusters.gr)
+cpgregs.int <- pintersect(unionregs.gr[queryHits(cpgregs.ovl)],cpgclusters.gr[subjectHits(cpgregs.ovl)])
+regs.cpg <- unionregs[queryHits(cpgregs.ovl),] %>%
+  mutate(inter_width = width(cpgregs.int)) %>%
+  group_by(chrom,start,end,regtype) %>%
+  summarize( inter_width = sum(as.numeric(inter_width)))
+cpgregs.gr <- GRanges(regs.cpg)
+cpgregwidths <- regs.cpg %>%
+  group_by(regtype) %>%
+  summarize(width = sum(as.numeric(inter_width)))
+# gpc
+gpcregs.ovl <- findOverlaps(unionregs.gr,gpcclusters.gr)
+gpcregs.int <- pintersect(unionregs.gr[queryHits(gpcregs.ovl)],gpcclusters.gr[subjectHits(gpcregs.ovl)])
+regs.gpc <- unionregs[queryHits(gpcregs.ovl),] %>%
+  mutate(inter_width = width(gpcregs.int)) %>%
+  group_by(chrom,start,end,regtype) %>%
+  summarize( inter_width = sum(inter_width))
+gpcregwidths <- regs.gpc %>%
+  group_by(regtype) %>%
+  summarize(width = sum(inter_width))
+
+
+```
+
+```{r enrichment_perbase, eval = T, include = FALSE, cache=F }
+# find overlaps
+dmrovl <- findOverlaps(dmrs.gr,unionregs.gr)
+dmrint <- width(pintersect(dmrs.gr[queryHits(dmrovl)],unionregs.gr[subjectHits(dmrovl)]))
+dmrs.obs <- dmrs.all[queryHits(dmrovl),] %>%
+  mutate(regtype = unionregs$regtype[subjectHits(dmrovl)],
+    inter_len = dmrint) %>%
+  group_by(one,two,direction,regtype) %>%
+  summarize(inter_len = sum(inter_len))  %>%
+  mutate(ppm = inter_len/cpgregwidths$width[match(regtype,cpgregwidths$regtype)] * 1e6,
+    lab = paste(one,two,direction,sep="_"),
+    expected = dmrs.totlen$ppm[match(lab,dmrs.totlen$lab)],
+    enrich = ppm/expected
+  )
+darovl <- findOverlaps(dars.gr,unionregs.gr)
+darint <- width(pintersect(dars.gr[queryHits(darovl)],unionregs.gr[subjectHits(darovl)]))
+dars.obs <- dars.all[queryHits(darovl),] %>%
+  mutate(regtype = unionregs$regtype[subjectHits(darovl)],
+    inter_len = darint) %>%
+  group_by(one,two,direction,regtype) %>%
+  summarize(inter_len = sum(inter_len))  %>%
+  mutate(ppm = inter_len/gpcregwidths$width[match(regtype,gpcregwidths$regtype)] * 1e6,
+    lab = paste(one,two,direction,sep="_"),
+    expected = dars.totlen$ppm[match(lab,dars.totlen$lab)],
+    enrich = ppm/expected
+  )
+
+enrich <- bind_rows(list(Methylation = dmrs.obs, Accessibility = dars.obs),.id = "mod")
+# remove svs from other
+enrich %>% filter( enrich > 1) 
+r <- unique(enrich$regtype)
+reglabs <- c("SV_MCF10A","SV_MCF7","SV_MDAMB231","SV_MCF10A_MCF7","SV_MCF10A_MDAMB231","SV_MCF7_MDAMB231",
+  "LINE","Alu","MIR","SINE","Satellite","CTCF_binding_site","enhancer","TF_binding_site","TSS","Gene Body")
+#reglabs <- c(r[7],r[6],r[1],r[8],r[10],r[9],r[2],r[4],r[11],r[12],r[3],r[5]) # order repetitive elements first
+enrich$regtype  <- factor(enrich$regtype,levels = reglabs)
+levels(enrich$regtype)  <- gsub("_"," ",levels(enrich$regtype))
+levels(enrich$regtype)  <- gsub(" binding site","",levels(enrich$regtype))
+levels(enrich$regtype)  <- gsub("enhancer","Enhancer",levels(enrich$regtype))
+
+# up vs down comparison
+updown.comp <- enrich %>%
+  na.omit() %>%
+  dplyr::select(-inter_len,-enrich,-expected,-lab) %>%
+  spread(direction,ppm) %>%
+  replace(is.na(.),0) %>%
+  mutate(tot = down + up,
+         upfrac = up/tot,
+         downfrac = down/tot)
+```
+
+```{r enrichment_perregion, eval = T, include = FALSE, cache=F }
+dmrs.permb  <- dmrs.permb %>%
+  mutate(lab = paste(one,two,sep="_"))
+dars.permb  <- dars.permb %>%
+  mutate(lab = paste(one,two,sep="_"))
+conc.permb <- conc.permb %>%
+  mutate(lab = paste(one,two,sep="_"))
+# find overlaps
+dmrovl <- findOverlaps(dmrs.gr,unionregs.gr)
+dmrs.regs <- dmrs.all[queryHits(dmrovl),] %>%
+  mutate(regtype = unionregs$regtype[subjectHits(dmrovl)]) 
+dmrs.obs <- dmrs.regs %>%
+  group_by(one,two,direction,regtype) %>%
+  summarize(n = n())  %>%
+  mutate(permb= n/cpgregwidths$width[match(regtype,cpgregwidths$regtype)] * 1e6,
+    lab = paste(one,two,sep="_"),
+    expected = dmrs.permb$permb[match(lab,dmrs.permb$lab)],
+    enrich = permb/expected
+  )
+dmrs.obs %>% filter(grepl("SV",regtype))
+darovl <- findOverlaps(dars.gr,unionregs.gr)
+dars.regs <- dars.all[queryHits(darovl),] %>%
+  mutate(regtype = unionregs$regtype[subjectHits(darovl)])
+dars.obs <- dars.regs %>%
+  group_by(one,two,direction,regtype) %>%
+  summarize(n = n()) %>%
+  mutate(permb = n/gpcregwidths$width[match(regtype,gpcregwidths$regtype)] * 1e6,
+    lab = paste(one,two,sep="_"),
+    expected = dars.permb$permb[match(lab,dars.permb$lab)],
+    enrich = permb/expected
+  )
+concovl <- findOverlaps(conc.gr,unionregs.gr)
+conc.regs <- conc.tb[queryHits(concovl),] %>%
+  mutate(regtype = unionregs$regtype[subjectHits(concovl)]) 
+conc.regs %>%
+  group_by(two,direction,regtype) %>%
+  summarize( n = n()) %>%
+  arrange(desc(n))
+conc.obs <- conc.regs %>%
+  group_by(one,two,direction,regtype) %>%
+  summarize(n = n())  %>%
+  mutate(permb= n/cpgregwidths$width[match(regtype,cpgregwidths$regtype)] * 1e6,
+    lab = paste(one,two,sep="_"),
+    expected = conc.permb$permb[match(lab,conc.permb$lab)],
+    enrich = permb/expected
+  )
+conc.obs %>% filter(grepl("SV",regtype))
+# combine
+enrich <- bind_rows(list(Methylation = dmrs.obs, Accessibility = dars.obs, Concordant = conc.obs),.id = "mod")
+# remove svs from other
+enrich %>% filter( enrich > 1) 
+r <- unique(enrich$regtype)
+reglabs <- c("SV_MCF10A","SV_MCF7","SV_MDAMB231","SV_MCF10A_MCF7","SV_MCF10A_MDAMB231","SV_MCF7_MDAMB231",
+  "LINE","Alu","MIR","SINE","Satellite","CTCF_binding_site","enhancer","TF_binding_site","TSS","Gene Body")
+enrich$regtype  <- factor(enrich$regtype,levels = reglabs)
+levels(enrich$regtype)  <- gsub("_"," ",levels(enrich$regtype))
+levels(enrich$regtype)  <- gsub(" binding site","",levels(enrich$regtype))
+levels(enrich$regtype)  <- gsub("enhancer","Enhancer",levels(enrich$regtype))
+
+# up vs down comparison
+updown.comp <- enrich %>%
+  na.omit() %>%
+  dplyr::select(mod,one,two,direction,regtype,permb) %>%
+  spread(direction,permb) %>%
+  replace(is.na(.),0) %>%
+  mutate(tot = down + up,
+         upfrac = up/tot,
+         downfrac = down/tot)
+all.comp <- bind_rows( 
+  dmrs.num  %>% 
+    mutate(mod = "Methylation") ,
+  dars.num  %>% 
+    mutate(mod = "Accessibility"),
+  conc.num %>% 
+    mutate(mod = "Concordant")
+  ) %>%
+  dplyr::select(-x,-y) %>%
+  spread(direction,n) %>%
+  mutate(tot = down + up,
+         upfrac = up/tot,
+         downfrac = down/tot,
+         regtype = "Genome"
+  ) 
+comp.tb <- bind_rows(updown.comp,all.comp) %>%
+  gather(direction,frac,upfrac,downfrac) %>%
+  mutate(regtype = factor(regtype,levels = c(levels(enrich$regtype),"Genome")))
+nums <- enrich %>%
+  dplyr::select(mod,one,two,direction,regtype,n) %>%
+  spread(direction,n) %>%
+  mutate(totn = down + up, frac = up/totn)
+
+nums %>%
+  filter(regtype == "CTCF")
+
+```
+```{r enrich_plot, eval = T, echo = F, fig.height=8, fig.width=6, message=F, warning = F}
+ymax <- 5
+# order the things
+plt <- enrich %>%
+  na.omit() %>%
+  mutate(mod = factor(mod, levels = c("Accessibility","Methylation","Concordant")),
+    comp = paste(one,"vs",two)
+  )
+levels(plt$mod)
+# let's output as a table
+plt.out <- plt %>%
+  dplyr::rename(What = mod, Comparison = comp, One = one, Two = two, Direction = direction,
+    Context = regtype, Enrichment = enrich, Number = n, Number_per_Mb = permb) %>%
+  dplyr::select(-lab,-expected)
+outpath <- file.path(plotdir,"200804_bcan_diff_enrichment_data.tsv")
+write_tsv(plt.out,outpath)
+
+nums.tb <- plt %>%
+  group_by(mod,comp,regtype) %>%
+  summarize( 
+    n = sum(n),
+    enrich = sum(enrich)) %>%
+  mutate(
+    y = ifelse(enrich > ymax - 1, ymax - 1,enrich),
+    lab = ifelse(enrich > ymax, round(enrich),round(enrich,1))
+  )
+plotpath <- file.path(plotdir,"200804_bcan_diff_enrichment.pdf")
+pdf(plotpath,width = 8, height = 8, useDingbats = F)
+#ggplot(enrich,aes(x = regtype, fill = direction, y = enrich)) +
+ggplot(plt %>% filter(!grepl("SV",regtype)),aes(x = regtype, y = enrich)) +
+  facet_wrap(~comp + mod,nrow = 3,scales = "free") +
+#  geom_bar(stat = "identity", position = "stack",alpha = 0.7) +
+  geom_bar(stat = "identity", position = "stack",fill = "orange",alpha = 0.7) +
+  geom_text(data = nums.tb %>% filter(!grepl("SV",regtype)),inherit.aes = F, mapping = aes( x = regtype, y = y , label = lab), vjust = -0.5, size = 3) +
+  coord_cartesian(ylim = c(0,ymax)) + 
+  geom_hline(yintercept = 1,linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1),
+    legend.background = element_rect(fill = NA, color = "black",linetype = "solid")
+  )
+#ggplot(comp.tb %>% filter(!grepl("SV",regtype)),aes(x = regtype, fill = direction, y = frac)) +
+#  facet_wrap(~one +two + mod,nrow = 3,scales = "free") +
+#  geom_bar(stat = "identity", position = "stack") +
+#  coord_cartesian(ylim = c(0,1)) + 
+#  geom_hline(inherit.aes =F, data = all.comp %>% filter(!grepl("SV",regtype)), mapping = aes( yintercept = upfrac),linetype = "dashed") +
+#  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1),
+#    legend.background = element_rect(fill = NA, color = "black",linetype = "solid")
+#  )
+#ggplot(enrich %>% filter(!grepl("SV",regtype)),aes(x = regtype, y = n,fill = direction)) +
+#  facet_wrap(~ one + two + mod,nrow = 3,scales = "free") +
+##  geom_bar(stat = "identity", position = "stack",alpha = 0.7) +
+#  geom_bar(stat = "identity", position = "stack",alpha = 0.7) +
+#  geom_text(data = nums.tb %>% filter(!grepl("SV",regtype)),inherit.aes = F, mapping = aes( x = regtype, y = y , label = n), vjust = -0.5, size = 3) +
+#  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1),
+#    legend.background = element_rect(fill = NA, color = "black",linetype = "solid")
+#  )
+#ggplot(enrich %>% filter(grepl("SV",regtype)),aes(x = regtype, y = n,fill = direction)) +
+#  facet_wrap(~ one + two + mod,nrow = 3,scales = "free") +
+##  geom_bar(stat = "identity", position = "stack",alpha = 0.7) +
+#  geom_bar(stat = "identity", position = "stack",alpha = 0.7) +
+#  geom_text(data = nums.tb %>% filter(grepl("SV",regtype)),inherit.aes = F, mapping = aes( x = regtype, y = y , label = n), vjust = -0.5, size = 3) +
+#  theme(axis.text.x = element_text(angle = 45, vjust = 1,hjust = 1),
+#    legend.background = element_rect(fill = NA, color = "black",linetype = "solid")
+#  )
+dev.off()
+```
+
+## distances of dmr/dar that are in a genomic context to other genomic contexts?
+
+```{r}
+regtypes <- names(regs.list)
+regs.gr <- lapply(regs.list,GRanges)
+dmrsregs.gr <- GRanges(dmrs.regs)
+darsregs.gr <- GRanges(dars.regs)
+i <- 1
+dists.tb <- tibble()
+for (i in seq_along(regtypes)){
+  print(i)
+  sel <- regtypes[i]
+  regs.other <- regs.gr[-i]
+  dmrs.sel <- dmrsregs.gr[dmrsregs.gr$regtype == sel]
+  dars.sel <- darsregs.gr[darsregs.gr$regtype == sel]
+  tb.dmr <- bind_rows(
+    lapply(regs.other,function(x){
+      as_tibble(distanceToNearest(dmrs.sel,x)) %>%
+        mutate(two = dmrs.sel$two[queryHits], direction = dmrs.sel$direction[queryHits])
+    }),.id = "regtype") %>%
+    mutate(reference = sel,mod = "dmr")
+  tb.dar <- bind_rows(
+    lapply(regs.other,function(x){
+      as_tibble(distanceToNearest(dars.sel,x)) %>%
+        mutate(two = dars.sel$two[queryHits], direction = dars.sel$direction[queryHits])
+    }),.id = "regtype") %>%
+    mutate(reference = sel,mod = "dar")
+  dists.tb <- bind_rows(dists.tb,tb.dmr,tb.dar)
+}
+# remove svs from other
+dists.filt <- dists.tb %>%
+  filter(!(two == "MCF7" & regtype == "MDAMB231_SV"), !(two == "MDAMB231" & regtype == "MCF7_SV"), 
+    !(two == "MCF7" & reference == "MDAMB231_SV"), !(two == "MDAMB231" & reference == "MCF7_SV") )%>%
+  mutate(regtype = ifelse(grepl("SV",regtype),"SV",regtype), 
+    reference = ifelse(grepl("SV",reference),"SV",reference)
+  )
+
+intersect.tb <- dists.filt %>%
+  mutate(inter = ifelse(distance == 0, "intersect","outside")) %>%
+  group_by(regtype,reference,direction,two,mod,inter)  %>%
+  summarize(n = n()) %>%
+  spread(inter,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(frac = intersect/(intersect + outside)) 
+intersect.tb %>%
+#  filter(regtype == "TSS",reference == "CTCF_binding_site") %>%
+  filter(reference == "SV") %>%
+  filter(mod == "dmr")  %>%
+  arrange(desc(frac))
+dists.filt %>%
+  group_by(regtype,reference,direction,two,mod) %>%
+  summarize(n =n()) %>%
+  filter(reference == "SV") %>%
+  arrange(desc(n))
+enrich %>%
+  filter(regtype == "SV")
+
+```
+### concordant regions in cancer SVs
+
+```{r}
+conc.7 <- conc.tb %>% filter(two == "MCF7")
+conc.231 <- conc.tb %>% filter(two == "MDAMB231")
+ovl <- findOverlaps(conc.gr,svreg.cancer)
+ovl.7 <- findOverlaps(GRanges(conc.7),svreg.7)
+ovl.231 <- findOverlaps(GRanges(conc.231),svreg.231)
+concsv.7 <- conc.7[queryHits(ovl.7),]
+concsv.231 <- conc.231[queryHits(ovl.231),]
+consv7.idx <- svreg.7[subjectHits(ovl.7)]$idx
+consv231.idx <- svreg.231[subjectHits(ovl.231)]$idx
+
+dist7.list <- lapply(regs.gr,distanceToNearest,x = GRanges(concsv.7))
+dist7.tb <- bind_rows(lapply(dist7.list,as_tibble),.id = "regtype")
+dist7.tb %>% 
+  group_by(regtype) %>%
+  summarize( mean(distance))
+dist231.list <- lapply(regs.gr,distanceToNearest,x = GRanges(concsv.231))
+dist231.tb <- bind_rows(lapply(dist231.list,as_tibble),.id = "regtype")
+dist231.tb %>% 
+  filter(distance < 1000)
+
+concsv <- sv %>% filter(idx %in% c(consv7.idx,consv231.idx))
+concsv.reg <- concsv %>%
+  mutate(start = start - 1001, end = end + 1000)
+
+outpath <- file.path(subdir,"200418_bcan_sv_conc_regs.bed")
+write_tsv(concsv.reg,outpath,col_names = F)
+
+
+distanceToNearest(GRanges(concsv.7),GRanges(tss))
+distanceToNearest(GRanges(concsv.231),GRanges(tss))
+distanceToNearest(GRanges(concsv.7),GRanges(tss))
+distanceToNearest(GRanges(concsv.231),GRanges(tss))
+
+```
+
+
+
+```{r cpg_meth, eval = T, include = FALSE, cache=F }
+# avg cov thr : 3, high : 15 * 5 = 75
+lowthr <- 5
+highthr <- 75
+# reps - cpg
+m <- getCoverage(cpg.keep,region = reps.gr,type = "M", what = "perRegionTotal")
+totcov <- getCoverage(cpg.keep,region = reps.gr,type = "Cov", what = "perRegionTotal")
+avgcov <- getCoverage(cpg.keep,region = reps.gr,type = "Cov", what = "perRegionAverage")
+# combine
+meth <- as_tibble(m) %>%
+  bind_cols(reps) 
+cov <- as_tibble(totcov) %>%
+  bind_cols(reps) 
+colnames(cov)[1:3] <- colnames(meth)[1:3] <- pData(cpg)$sample
+# thrsholding
+keepi.mat <- avgcov >= lowthr & avgcov <= highthr
+colSums(keepi.mat,na.rm = T)
+keepi <- which(rowSums(keepi.mat) == 3)
+meth <- meth[keepi,]
+cov <- cov[keepi,]
+# gather
+meth.gather <- meth %>% 
+  gather(sample,value,MCF10A,MCF7,MDAMB231)
+cov.gather <- cov %>% 
+  gather(sample,value,MCF10A,MCF7,MDAMB231)
+cpg.meth <- bind_rows(list(
+  meth = meth.gather,
+  cov = cov.gather
+), .id = "what") %>%
+  spread(what,value)
+cpg.meth <- cpg.meth %>%
+  mutate(freq = meth/cov)
+# cpg
+m <- getCoverage(gpc.keep,region = reps.gr,type = "M", what = "perRegionTotal")
+totcov <- getCoverage(gpc.keep,region = reps.gr,type = "Cov", what = "perRegionTotal")
+avgcov <- getCoverage(gpc.keep,region = reps.gr,type = "Cov", what = "perRegionAverage")
+# combine
+meth <- as_tibble(m) %>%
+  bind_cols(reps) 
+cov <- as_tibble(totcov) %>%
+  bind_cols(reps) 
+colnames(cov)[1:3] <- colnames(meth)[1:3] <- pData(gpc)$sample
+# thrsholding
+keepi.mat <- avgcov >= lowthr & avgcov <= highthr
+colSums(keepi.mat,na.rm = T)
+keepi <- which(rowSums(keepi.mat) == 3)
+meth <- meth[keepi,]
+cov <- cov[keepi,]
+# gather
+meth.gather <- meth %>% 
+  gather(sample,value,MCF10A,MCF7,MDAMB231)
+cov.gather <- cov %>% 
+  gather(sample,value,MCF10A,MCF7,MDAMB231)
+gpc.meth <- bind_rows(list(
+  meth = meth.gather,
+  cov = cov.gather
+), .id = "what") %>%
+  spread(what,value)
+gpc.meth <- gpc.meth %>%
+  mutate(freq = meth/cov)
+meth.tb <- bind_rows(list(cpg = cpg.meth, gpc = gpc.meth),.id = "mod")
+```
+# gpc peaks
+
+```{r gpc_peaks, eval = T, include = FALSE, cache=F }
+peaks.gr <- GRanges(peaks.all)
+peakovl <- findOverlaps(peaks.gr,reps.gr)
+peaks.rep <- bind_cols(peaks.all[queryHits(peakovl),],reps[subjectHits(peakovl),])
+
+# normalize numbers by mcf10a
+peaks.num  <- peaks.rep %>%
+  group_by(samp,reptype) %>%
+  summarize(n = n()) %>%
+  spread(samp,n) %>%
+  gather(samp,n,-reptype,-MCF10A) %>%
+  mutate(n = n/MCF10A)
+
+```
+
+# dmrs/dars comparison in repetitive elemetns?
+
+```{r rep_enrich, eval = T, include = FALSE, cache=F }
+darovl <- findOverlaps(dars.gr,reps.gr)
+dmrovl <- findOverlaps(dmrs.gr,reps.gr)
+darshuf <- findOverlaps(dars.gr,shuf.gr)
+dmrshuf <- findOverlaps(dmrs.gr,shuf.gr)
+
+dars.rep <- bind_cols(dars.all[queryHits(darovl),],reps[subjectHits(darovl),])
+dmrs.rep <- bind_cols(dmrs.all[queryHits(dmrovl),],reps[subjectHits(dmrovl),])
+dars.shuf <- bind_cols(dars.all[queryHits(darshuf),],regs_shuf[subjectHits(darshuf),])
+dmrs.shuf <- bind_cols(dmrs.all[queryHits(dmrshuf),],regs_shuf[subjectHits(dmrshuf),])
+
+# get number per reptype
+reps.num <- reps %>%
+  group_by(reptype) %>%
+  summarize(n= n())
+dars.num <- dars.rep %>%
+  distinct(repchrom,repstart,repend,repname,reptype,two,direction) %>%
+  group_by(direction,two,reptype) %>%
+  summarize( n = n()) %>%
+  mutate(frac = n/reps.num$n[match(reptype,reps.num$reptype)])
+dmrs.num <- dmrs.rep %>%
+  distinct(repchrom,repstart,repend,repname,reptype,two,direction) %>%
+  group_by(direction,two,reptype) %>%
+  summarize( n = n()) %>%
+  mutate(frac = n/reps.num$n[match(reptype,reps.num$reptype)])
+nums.tb <- bind_rows(list(Methylation = dmrs.num, Accessibility = dars.num),.id = "mod")
+# ratio of up vs down
+alldmrs.rat <- dmrs.totn %>%
+  spread(direction,n) %>%
+  mutate(ratio = up/down,
+    reptype = "all",
+    mod = "Methylation"
+  ) 
+alldars.rat <- dars.totn %>%
+  spread(direction,n) %>%
+  mutate(ratio = up/down,
+    mod = "Accessibility",
+    reptype = "all")
+dmrs.rat <- dmrs.num %>%
+  spread(direction,n) %>%
+  mutate(ratio = up/down,
+    mod = "Methylation"
+  )
+dars.rat <- dars.num %>%
+  spread(direction,n) %>%
+  mutate(ratio = up/down,
+    mod = "Accessibility"
+  )
+ratios.tb <- bind_rows(list(alldmrs.rat,alldars.rat,dmrs.rat,dars.rat))
+```
+
+```{r distro_plot, eval = T, echo = F, fig.height=3, fig.width=8, message=F, warning = F}
+pal <- pal_npg("nrc")(9)
+bcan_pal <- c(pal[4],pal[1],pal[8])
+plotpath <- file.path(plotdir,"bcan_repeat_comparison.pdf")
+pdf(plotpath,width = 4, height = 3, useDingbats = F)
+ggplot(nums.tb,aes( x = reptype, fill = direction, y = frac)) +
+  facet_wrap(~mod+ two) +
+  geom_bar(stat = "identity",position = "dodge")
+ggplot(ratios.tb,aes( x = reptype, fill = two, y = ratio)) +
+  facet_wrap(~mod) +
+  geom_bar(stat = "identity",position = "dodge")
+ggplot(meth.tb,aes( x = reptype, color = sample, y = freq)) +
+  facet_wrap(~mod) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_color_manual(values = bcan_pal,name = "Cell Line" , labels = c("MCF10A","MCF7","MDAMB231")) +
+  labs( x = "Repeat Type", y = "Methylation Frequency") +
+  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid"),
+    legend.position = "bottom") +
+  coord_cartesian(clip = "off")
+#ggplot(peaks.num,aes( x = reptype, fill = samp, y = n)) +
+#  geom_bar(position = "dodge", stat = "identity") +
+##  scale_fill_manual(values = bcan_pal,name = "Cell Line" , labels = c("MCF10A","MCF7","MDAMB231")) +
+#  labs( x = "Repeat Type", y = "Number of Accessibility Peaks") +
+#  theme(legend.background = element_rect(fill = NA, color = "black", linetype = "solid")) +
+#  coord_cartesian(clip = "off")
+dev.off()
+```
+

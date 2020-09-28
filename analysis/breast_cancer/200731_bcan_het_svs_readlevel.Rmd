@@ -1,0 +1,243 @@
+---
+title: "nanoNOMe single-read combinatorial clutsering"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library(parallel)
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(ggridges)
+library(mclust)
+library(ggridges)
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+```
+
+```{r functions, include = F}
+```
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome"
+subdir <- file.path(nanonomedir,"regs")
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/bcan"
+# mbed
+mbeddir <- file.path(nanonomedir,"pooled/mbed")
+m10a_path <- file.path(mbeddir,"MCF10A_nanoNOMe.cpggpc.meth.bed.gz")
+m7_path <- file.path(mbeddir,"MCF7_nanoNOMe.cpggpc.meth.bed.gz")
+m231_path <- file.path(mbeddir,"MDAMB231_nanoNOMe.cpggpc.meth.bed.gz")
+# coords
+svdir <- file.path(nanonomedir,"pooled/sv")
+coord_path <- file.path(svdir,"bcan_het_insdel_coords.txt")
+qnames_path <- file.path(svdir,"bcan_het_insdel_qnames.txt")
+```
+
+
+```{r regs, eval = T, include = FALSE, cache=F }
+coords <- read_tsv(coord_path)
+qnames <- read_tsv(qnames_path)
+
+# get 1kb upstream/downstream?
+flank <- 1e3
+regs <- coords %>%
+  gather(side,pos,start,end) %>%
+  mutate(start = ifelse(side == "start",pos - flank, pos),
+    end = start + flank,
+    start = floor(start/10) * 10,
+    end = ceiling(end/10) * 10
+  )   %>%
+  dplyr::select(chr,start,end,id,svtype,sample,side) %>%
+  arrange(chr,start,end)
+
+regs_out  <- regs %>%
+  distinct(chr,start,end,.keep_all = T)
+  
+regs.fp <- file.path(subdir,"bcan_hetSV_regs.bed")
+write_tsv(regs_out,regs.fp,col_names = F)
+```
+
+# subset mbed - use bedtools to require full intersection with the 1kb region
+```{r subset_mbed}
+subtag <- "hetSVs"
+sub10.fp = file.path(subdir,paste("MCF10A_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+sub7.fp = file.path(subdir,paste("MCF7_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+sub231.fp = file.path(subdir,paste("MCF231_nanoNOMe",subtag,"singleread.cpggpc.meth.bed",sep = "."))
+# mbed
+com <- paste("tabix",m10a_path,"-R",regs.fp,">",sub10.fp)
+system(com)
+com <- paste("tabix",m7_path,"-R",regs.fp,">",sub7.fp)
+system(com)
+com <- paste("tabix",m231_path,"-R",regs.fp,">",sub231.fp)
+system(com)
+```
+
+load single-read data
+
+```{r single_read, eval = T, include = FALSE, cache=F }
+mbfp.list <- list(MCF10A = sub10.fp,MCF7 = sub7.fp , MDAMB231 = sub231.fp)
+# fetch single read data in this region
+reads.list <- lapply(mbfp.list,tabix_mbed,extcol = "motif",by = "read")
+# gather
+reads <- bind_rows(reads.list,.id = "sample")
+# separate by mod
+reads.cpg <- reads[reads$motif == "CG",]
+reads.gpc <- reads[reads$motif == "GC",]
+# remove fully methylated gpc reads
+reads.gpc <- remove_fully_methylated(reads.gpc)
+# qnames as id for the sample
+samp.qnames <- reads %>% dplyr::select(sample,qname = readname) %>% distinct()
+# add sample name to data
+reads.cpg$sample <- samp.qnames$sample[match(reads.cpg$readname,samp.qnames$qname)]
+reads.gpc$sample <- samp.qnames$sample[match(reads.gpc$readname,samp.qnames$qname)]
+```
+
+# get calls, smooth gc, and add distance
+
+```{r single_read_parse, eval = T, include = FALSE, cache=F }
+# do cg and gc separately and use mclapply
+# no mclapply b/c it uses too much ram for the amount of data I'm tryying to handle
+# It will take forever to run, so I'll just run overnight
+st <- Sys.time()
+cgcalls <- bind_rows(lapply(seq(nrow(regs)),function(i){
+  print(i)
+  reg <- regs[i,]
+  reginfo <- reg %>% 
+    dplyr::rename(regstart = start, regend = end) %>%
+    dplyr::select( - chr) 
+  # subset reads overlapping this region
+  cg.reg <- reads.cpg %>%
+    filter(chrom == reg$chr, start <= reg$start, end >= reg$end, sample == reg$sample)
+  calls <- tibble()
+  if (nrow(cg.reg) != 0) {
+    # fix calls
+    calls <- mbedByCall(cg.reg,region = reg, verbose = F) %>%
+      redo_mcall(1.5) 
+    # add info 
+    calls <- calls %>%
+      bind_cols(reginfo[rep(1,nrow(calls)),]) 
+  }
+  calls
+})) 
+cgcalls <- cgcalls %>%
+  mutate(
+    distance = ifelse(side == "start", regend - start, start - regstart))
+  
+Sys.time() - st
+
+# gc
+st <- Sys.time()
+gccalls.list <- lapply(seq(nrow(regs)),function(i){
+  print(i)
+  reg <- regs[i,]
+  reginfo <- reg %>% 
+    dplyr::rename(regstart = start, regend = end) %>%
+    dplyr::select( -chr)
+  # subset reads overlapping this region
+  gc.reg <- reads.gpc %>%
+    filter(chrom == reg$chr, start <= reg$start, end >= reg$end, sample == reg$sample)
+  calls <- tibble()
+  if (nrow(gc.reg) != 0) {
+    # fix calls
+    calls <- mbedByCall(gc.reg,verbose = F) %>%
+      redo_mcall(1) 
+    calls <- calls %>%
+      bind_cols(reginfo[rep(1,nrow(calls)),]) 
+  } 
+  calls
+})
+gccalls <- bind_rows(gccalls.list) %>%
+  mutate(
+    distance = ifelse(side == "start", regend - start, start - regstart))
+Sys.time() - st
+
+cgout <- file.path(subdir,"200731_bcan_hetSVs_1kb_cpg_calls.txt.gz") 
+gcout <- file.path(subdir,"200731_bcan_hetSVs_1kb_gpc_runs.txt.gz") 
+write_tsv(cgcalls,cgout)
+write_tsv(gccalls,gcout)
+```
+
+```{r compare, eval = T, include = FALSE, cache=F }
+# just the data that's on the right side and within 1kb for cpg and 100bp for gpc
+cgside <- 1e3
+gcside <- 100
+cgcalls.side <- cgcalls %>%
+  filter(distance >=0, distance <= cgside)
+gccalls.side <- gccalls %>%
+  filter(distance >=0, distance <= gcside)
+# let's label sv vs ref
+qnames <- qnames %>%
+  mutate(
+    lab = paste(id,sample,qname,sep="_")
+  )
+cgcalls.side <- cgcalls.side %>%
+  mutate(
+    lab = paste(id,sample,qname,sep="_"),
+    what = ifelse(lab %in% qnames$lab,"sv","ref"))
+gccalls.side <- gccalls.side %>%
+  mutate(
+    lab = paste(id,sample,qname,sep="_"),
+    what = ifelse(lab %in% qnames$lab,"sv","ref"))
+# summarize per sv, per sample, per allele
+cgavg <- cgcalls.side %>%
+  filter(!is.na(mcall)) %>%
+  group_by(id,sample,what,side) %>%
+  summarize(freq = sum(mcall)/n(), n = n())
+gcavg <- gccalls.side %>%
+  filter(!is.na(mcall)) %>%
+  group_by(id,sample,what,side) %>%
+  summarize(freq = sum(mcall)/n(), n = n())
+methavg <- bind_rows(list(cpg = cgavg, gpc = gcavg),.id = "mod")
+methavg <- methavg %>%
+  mutate(svtype = regs$svtype[match(id,regs$id)])
+
+# by alleal
+methavg.allele <- methavg %>%
+  dplyr::select(-n) %>%
+  spread(what,freq)
+
+for (m in c("cpg","gpc")){
+  for (s in c("MCF10A","MCF7","MDAMB231")){
+    for (sv in c("DEL","INS")){
+      dat.sub <- methavg %>%
+        filter(mod == m, sample == s, svtype == sv)
+      pval <- wilcox.test(freq ~ what ,data = dat.sub)$p.value
+      message(paste(m,s,sv,round(pval,2)))
+    }
+  }
+}
+```
+
+```{r plts, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+plotpath <- file.path(plotdir,"200731_bcacn_hetSVs_comparisons.pdf")
+pal <- wes_palette("Rushmore1")
+pdf(plotpath)
+ggplot(methavg.allele,aes( x = ref, y = sv)) +
+  facet_wrap(~mod + svtype + sample ) +
+  scale_fill_gradientn(name = "Count", trans = "log10",colors = pal) +
+  geom_bin2d() +
+  geom_abline(slope = 1, linetype = "dashed") +
+  coord_fixed() +
+  labs(x = "Reference", y = "Variant")
+dev.off()
+```
