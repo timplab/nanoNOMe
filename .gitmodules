@@ -1,3 +1,3 @@
 [submodule "nanopore-methylation-utilities"]
 	path = nanopore-methylation-utilities
-	url = git@github.com:isaclee/nanopore-methylation-utilities.git
+	url = git@github.com:timplab/nanopore-methylation-utilities.git
